@@ -11,15 +11,24 @@ no-fabrication discipline (strategy prompt Section 12: "Never fabricate...
 state explicitly when data isn't available").
 
 Confirmed against Kite's real NSE INDICES list (Aug 2026) -- every value
-here is a tradingsymbol that actually exists, not assumed.
+here is a tradingsymbol that actually exists, not assumed. Sector KEYS
+were originally guessed from screener.in's GICS-like taxonomy, then
+corrected against real output from a full 40-symbol watchlist scan (Aug
+31 2026) -- e.g. screener.in actually uses the combined string "Automobile
+and Auto Components", not separate "Automobiles"/"Auto Components" as
+first guessed; that real run is what caught it.
+
+Deliberately left UNMAPPED (confirmed no matching Kite sector index
+exists, not just unresearched): "Power" (NTPC, POWERGRID), "Construction"
+(LT), "Construction Materials" / cement (ULTRACEMCO, GRASIM), "Services"
+(too broad/ambiguous -- ADANIPORTS).
 """
 
 SECTOR_TO_NIFTY_INDEX = {
     "Information Technology": "NIFTY IT",
     "Banks": "NIFTY BANK",
     "Oil, Gas & Consumable Fuels": "NIFTY OIL AND GAS",
-    "Automobiles": "NIFTY AUTO",
-    "Auto Components": "NIFTY AUTO",
+    "Automobile and Auto Components": "NIFTY AUTO",
     "Pharmaceuticals & Biotechnology": "NIFTY PHARMA",
     "Healthcare": "NIFTY HEALTHCARE",
     "Fast Moving Consumer Goods": "NIFTY FMCG",
