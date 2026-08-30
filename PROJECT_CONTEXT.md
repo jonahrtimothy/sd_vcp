@@ -141,13 +141,23 @@ independently of the growth table so one failure doesn't lose the other)
 and confirmed: HDFCBANK now correctly shows `accelerating`, EPS
 YoY=17.9%, sector="Financial Services".
 
-**Blocked mid-testing, needs Jonah**: the Kite access_token expired
-partway through validating this (normal daily expiry) before the new
-NIFTY 50/sector-index OHLCV fetch could run live. Everything degrades
-honestly in the meantime (scan output correctly shows "insufficient NIFTY
-50 history... not computed" rather than a wrong number), but re-running
-`kite_auth.py login`/`exchange` then `refresh_data.py` is needed to get
-real values flowing through these two new signals.
+**RESOLVED same day**: Jonah re-authenticated (the Kite login/exchange
+flow needed 3 attempts -- 2 request_token timing issues from the
+copy-paste-across-screenshots delay, then a stale-browser-session issue
+fixed by using a fresh Incognito window -- normal Kite Connect flakiness,
+not a code bug) and ran `refresh_data.py` for real across the whole
+40-symbol watchlist. This caught one real calibration bug in
+`sector_mapping.py`: screener.in actually uses "Automobile and Auto
+Components" as one combined sector string, not the separate
+"Automobiles"/"Auto Components" originally guessed -- fixed, restoring
+sector-RS coverage for MARUTI, M&M, EICHERMOT, HEROMOTOCO. Confirmed
+fully working end-to-end on real data: HDFCBANK's bearish setup now shows
+"NIFTY 50 is Stage 4 - aligned with bearish setup" and a real sector-RS
+comparison (NIFTY FIN SERVICE vs NIFTY 50), pushing its conviction score
+from 89 to 95 with genuine index data instead of "insufficient data"
+placeholders. All 40 watchlist stocks got real fundamentals scraped in
+this same run (sector, industry, earnings trend) -- a full real
+end-to-end proof of the whole pipeline, not just a couple of test symbols.
 
 USDINR/crude and commodities/indexes generally remain deferred, per the
 scope decisions above.
