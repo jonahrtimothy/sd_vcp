@@ -230,9 +230,19 @@ def fetch_delivery_data(for_date: date | None = None, headless: bool = False) ->
         page.goto("https://www.nseindia.com", wait_until="domcontentloaded", timeout=30000)
         time.sleep(2)
 
+        last_error = None
         for url in urls_to_try:
             print(f"Trying: {url}")
-            response = context.request.get(url)
+            try:
+                response = context.request.get(url)
+            except Exception as e:
+                # A network/TLS-level failure on one URL (seen in practice:
+                # the legacy www1.nseindia.com fallback threw an SSL alert)
+                # must not abort the whole fetch -- still try the remaining
+                # URL(s) before giving up.
+                last_error = e
+                status = None
+                continue
             if response.status == 200:
                 raw_text, used_url, status = response.text(), url, 200
                 break
@@ -243,9 +253,10 @@ def fetch_delivery_data(for_date: date | None = None, headless: bool = False) ->
     if raw_text is None:
         raise ScraperError(
             f"Could not fetch delivery data from any known URL pattern for "
-            f"{for_date}. Last status: {status}. Either the date has no "
-            f"trading data, or NSE changed the file location/format again — "
-            f"check nseindia.com's current delivery position report page manually."
+            f"{for_date}. Last status: {status}. Last error: {last_error}. "
+            f"Either the date has no trading data, or NSE changed the file "
+            f"location/format again — check nseindia.com's current delivery "
+            f"position report page manually."
         )
 
     raw_path = RAW_DIR / f"mto_{for_date.strftime('%Y%m%d')}.dat"
@@ -332,6 +343,12 @@ def backfill_participant_oi(db_module, days: int = 15, headless: bool = False) -
                 results[d.isoformat()] = "not yet published today (or pattern changed) -- check after ~6:30pm IST"
             else:
                 results[d.isoformat()] = "no data (holiday?)"
+        except Exception as e:
+            # A network/browser-level failure (e.g. an SSL error on one
+            # request) for a single date must not abort the whole backfill
+            # run -- log it and move on to the next date (same "continue
+            # past a single failure" principle as scanner.py's watchlist loop).
+            results[d.isoformat()] = f"ERROR (unexpected): {e}"
 
     weekday_attempts = len([d for d in candidates if d != today])
     ok_past = len([d for d in candidates if d != today and results.get(d.isoformat(), "").startswith("ok")])
@@ -368,6 +385,11 @@ def backfill_delivery_data(db_module, days: int = 15, headless: bool = False) ->
                 results[d.isoformat()] = "not yet published today (or pattern changed) -- check after ~6:30pm IST"
             else:
                 results[d.isoformat()] = "no data (holiday?)"
+        except Exception as e:
+            # Same defense as backfill_participant_oi: a single date's
+            # unexpected failure (browser crash, etc.) must not abort the
+            # whole backfill run.
+            results[d.isoformat()] = f"ERROR (unexpected): {e}"
 
     weekday_attempts = len([d for d in candidates if d != today])
     ok_past = len([d for d in candidates if d != today and results.get(d.isoformat(), "").startswith("ok")])
