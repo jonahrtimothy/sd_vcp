@@ -132,9 +132,10 @@ def page_daily_scan(cfg: dict):
         "This backfills EVERYTHING since whatever was last saved -- OHLCV, India VIX, "
         "participant OI, delivery%, and cash FII/DII -- then re-runs the full scan. "
         "Safe to click any time, including after being away for days; it always catches "
-        "up rather than assuming a fixed window. (Cash FII/DII is the one exception: "
-        "NSE's live endpoint only ever has the last ~1-2 days, so a longer gap in that "
-        "one source specifically can't be recovered this way -- see PROJECT_CONTEXT.md.)"
+        "up rather than assuming a fixed window. Cash FII/DII now comes from Trendlyne "
+        "(~1 trading month of real history per fetch) rather than NSE's live-only "
+        "endpoint, so even a multi-week gap in that source self-heals -- see "
+        "PROJECT_CONTEXT.md for why."
     )
     if st.button("🔄 Backfill everything + re-run scan now", type="primary"):
         with st.spinner("Refreshing data (Kite + NSE) and re-running the scan... this can take a few minutes."):

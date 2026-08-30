@@ -9,9 +9,8 @@ Kite (not NSE) specifically because Kite's date-range API backfills
 cleanly across any gap; (3) `kite_ohlcv.py` and `nse_scraper.py` both
 gained backfill functions so a gap of any length (laptop off for days)
 catches up automatically rather than needing a fixed lookback window --
-except cash FII/DII, which has no confirmed historical endpoint and is
-therefore the one genuinely unrecoverable gap (see "cloud archiver" idea
-below); (4) `scanner.py` (Phase 5) orchestrates the whole pipeline across
+cash FII/DII's gap was closed too, see below, though that took a
+different path than originally planned; (4) `scanner.py` (Phase 5) orchestrates the whole pipeline across
 the watchlist; (5) the Streamlit dashboard (Phase 6, all 4 pages, dark
 theme with color-coded conviction/direction/stage badges and a candlestick
 chart with shaded zones + VCP markers) is built and was validated by
@@ -39,24 +38,50 @@ real bug found and fixed from Jonah actually running the new backfill CLI:
 parse `"15"` as a date) -- fixed, but still needs Jonah's re-confirmation
 since NSE remains unreachable from this session.
 
-**Still being discussed, not yet built**: a genuinely SEPARATE small
-cloud-hosted project (its own repo, explicitly not merged into this
-codebase) that runs a daily GitHub Actions job to archive cash FII/DII
-data -- the one data source here that can't backfill gaps through NSE's
-live-only endpoint. Needs a repo name/visibility decision, and either `gh`
-CLI or Jonah creating the empty repo manually. See SYSTEM_BUILD_PROMPT.md
-Section 2b for the full design.
+**Cash FII/DII gap: RESOLVED (Aug 31 2026), and not the way we first
+planned.** The GitHub Actions cloud-archiver idea (separate repo
+`nse-fii-dii-archiver`) was built as a smoke test first, per the plan to
+de-risk before committing -- and the smoke test itself failed: NSE blocks
+GitHub Actions runners too (confirmed via a real Actions run, not
+assumed), so that whole approach was correctly abandoned rather than
+built out further. Investigating further (checking BSE India and
+Trendlyne for real, at Jonah's request, plus checking whether screener.in
+had this data) found the actual fix: **Trendlyne's public FII/DII page
+embeds ~1 trading month of real daily history directly in server-rendered
+HTML** (no Playwright needed, not blocked from the same session NSE and
+BSE both blocked) -- `src/data/trendlyne_scraper.py` now feeds this
+straight into the existing `cash_fii_dii` table, confirmed matching NSE's
+own real published numbers exactly. Since a single fetch always carries a
+month of trailing history, even a multi-week gap now self-heals -- the
+whole "unrecoverable gap" problem is closed, not just gracefully
+degraded. The `nse-fii-dii-archiver` repo is kept only as a documented
+dead end. One side-finding along the way: screener.in doesn't have daily
+cash flow data, but it DOES have quarterly FII/DII shareholding %
+PER STOCK (different, valuable, not yet wired in -- flagged in
+SYSTEM_BUILD_PROMPT.md Section 1 for later).
 
-**One real limitation hit this session**: nse_scraper.py's new backfill
-functions could not be validated against live NSE data from within Claude
-Code's own session -- nseindia.com blocked/timed out every connection
-attempt, while the same session reached Kite and screener.in successfully.
-This matches the limitation already documented in
-`trading_strategy_system_prompt.md` Section 11 (NSE blocks cloud/
-datacenter IPs) and is not a code bug -- but it does mean the backfill
-code needs one real validation run on Jonah's own machine before being
-fully trusted, even though it reuses the already-validated single-shot
-fetch functions.
+**One real limitation hit earlier in this session, now resolved by Jonah
+running it himself**: nse_scraper.py's new backfill functions couldn't be
+validated against live NSE data from within Claude Code's own session
+(NSE blocks cloud/datacenter IPs, matching `trading_strategy_system_prompt.md`
+Section 11). Jonah ran `backfill-oi 15` and `backfill-delivery 15` on his
+own machine: `backfill-oi` worked perfectly end to end (9 real trading
+days backfilled). `backfill-delivery` surfaced one real bug --  an
+unhandled Playwright SSL error on the legacy `www1.nseindia.com` fallback
+URL crashed the whole script instead of being treated as one failed date
+-- fixed (per-URL errors are now caught so the next URL/date still gets
+tried; both backfill loops now catch any unexpected exception, not just
+ScraperError, so one bad date can't abort the whole run). 8 of 9 days had
+already saved successfully before the crash, so the DB now has real
+multi-day participant_oi/delivery_pct history too -- confirmed via a real
+scan where the OI-buildup and delivery%-trend confluence signals compute
+actual values instead of "insufficient data" for the first time.
+
+**Immediate next step**: build the Kite-sourced regime filters discussed
+with Jonah -- Nifty trend alignment, USDINR/crude, and (this closes the
+last fundamentals.py gap) sector relative strength via NSE sector indices
+-- all likely available through Kite's own instrument list the same way
+India VIX was, avoiding NSE/scraping fragility entirely for these three.
 
 ## What this project is
 A personal trading analysis system for Jonah, combining supply/demand zone

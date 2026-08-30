@@ -47,7 +47,8 @@ log = logging.getLogger("scanner")
 
 def refresh_all_data(cfg: dict) -> None:
     from data.kite_ohlcv import backfill_ohlcv, backfill_india_vix
-    from data.nse_scraper import fetch_cash_fii_dii, backfill_participant_oi, backfill_delivery_data
+    from data.nse_scraper import backfill_participant_oi, backfill_delivery_data
+    from data.trendlyne_scraper import fetch_cash_fii_dii_history
 
     watchlist = cfg["watchlist"]
     bootstrap_days = cfg["detection"].get("ohlcv_bootstrap_days", 400)
@@ -87,9 +88,9 @@ def refresh_all_data(cfg: dict) -> None:
     except Exception as e:
         log.error(f"delivery% backfill failed -- {e}")
 
-    log.info("=== Refreshing cash FII/DII (NSE, live-only -- cannot backfill gaps) ===")
+    log.info("=== Refreshing cash FII/DII (Trendlyne -- ~1 trading month per fetch, real backfill) ===")
     try:
-        fii_dii = fetch_cash_fii_dii()
+        fii_dii = fetch_cash_fii_dii_history()
         n = db.upsert_cash_fii_dii(fii_dii)
         log.info(f"cash_fii_dii: +{n} rows")
     except Exception as e:

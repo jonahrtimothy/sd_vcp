@@ -85,10 +85,24 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   for fast pure-logic testing, not a substitute for real-data validation)
 
 **Data layer** (`src/data/`):
+- `trendlyne_scraper.py` (NEW, Step 11) — `fetch_cash_fii_dii_history()`:
+  the real fix for the cash FII/DII gap (see Section 2b for the full
+  investigation). Plain `urllib` GET against
+  `trendlyne.com/macro-data/fii-dii/latest/`, parses the JSON embedded in
+  `<table id="cash-table-main-pastmonth" data-jsondata="...">`. Returns
+  ~23 real trading days per fetch in the exact column shape
+  `db.upsert_cash_fii_dii()` already expects. No Playwright needed --
+  validated as NOT blocked by the bot-detection that stopped both NSE and
+  BSE. This is now the PRIMARY source `scanner.py` uses; `nse_scraper.py`'s
+  `fetch_cash_fii_dii()` (below) remains as an occasional NSE cross-check,
+  per the strategy prompt's own "cross-check against NSE as source of
+  truth" guidance -- it's just no longer the default daily path since it
+  can't backfill.
 - `nse_scraper.py` — three working, validated scrapers, all persisting to
   the DB automatically: `fetch_participant_oi()` (direct archive CSV),
   `fetch_cash_fii_dii()` (live JSON API, only returns ~1-2 recent days —
-  not a historical backfill source), `fetch_delivery_data()` (MTO file,
+  not a historical backfill source, superseded as the default path by
+  `trendlyne_scraper.py` above), `fetch_delivery_data()` (MTO file,
   filtered to `series == "EQ"` — the raw file also contains bonds/G-secs/
   SME listings that must be excluded). Run as:
   `python src\data\nse_scraper.py <oi|fiidii|delivery> [YYYY-MM-DD]`
@@ -295,32 +309,48 @@ missing data.
 9. **Failure handling**: distinguish "report not yet published" (retry later) from "URL pattern broke / site structure changed" (log loudly, stop retrying, needs human attention) — these are different failure modes
 10. Same approach (direct URL where known + Playwright fallback) applies to delivery% and cash FII/DII — these will be built in subsequent steps once participant OI is proven working
 
-**Real limitation, confirmed (Aug 2026)**: cash FII/DII has no confirmed
-historical-backfill endpoint -- the working live JSON API
-(`nseindia.com/api/fiidiiTradeReact`) only ever returns the most recent
-~1-2 trading days. Unlike participant OI/delivery% (per-date archives that
-backfill cleanly any time later), a gap of more than ~2 days in this one
-data source is permanently unrecoverable through this endpoint. The
-confluence scoring already handles this honestly (a staleness check drops
-the FII/DII input to zero contribution once it's older than
-`data_staleness_days`, rather than using stale data as if current) -- but
-that's "fails safely," not "closes the gap."
+**Real limitation, discovered and then SOLVED (Aug 2026)**: NSE's own live
+JSON API (`nseindia.com/api/fiidiiTradeReact`) only ever returns the most
+recent ~1-2 trading days -- not a historical backfill source, unlike
+participant OI/delivery% (per-date archives). A cloud-hosted GitHub
+Actions archiver was investigated as a fix (see the now-closed
+`nse-fii-dii-archiver` side-repo) but its own smoke test proved GitHub
+Actions runners get blocked by NSE's cloud-IP bot detection too --
+confirmed via a real Actions run, not assumed.
 
-**Proposed fix, discussed with Jonah, not yet built**: a genuinely
-SEPARATE small project (its own repo/folder, explicitly NOT merged into
-this codebase) that runs on a free cloud scheduler (e.g. a daily GitHub
-Actions cron job) -- always on regardless of whether Jonah's laptop is --
-scrapes cash FII/DII once a day, and commits the result back into its own
-repo (repo-as-datastore: sd_vcp fetches the raw file over HTTPS from that
-repo whenever it needs to backfill a gap, e.g.
-`raw.githubusercontent.com/<user>/<repo>/main/data/cash_fii_dii.json`).
-This turns the one truly unrecoverable data source into a recoverable one,
-without touching this project's own code/scope. Needs: a new GitHub repo
-(name + public/private decision), and either the `gh` CLI installed and
-authenticated, or Jonah creating the empty repo manually on github.com
-(the sandbox this was designed in doesn't have `gh` installed). Once that
-exists, this codebase's job is only a small fetch-and-merge step in
-`refresh_all_data()` -- not building or maintaining the archiver itself.
+**What actually fixed it**: `src/data/trendlyne_scraper.py`. Investigated
+three alternatives empirically (reachability tested from the same session
+NSE blocked): BSE India is reachable via plain HTTP but its FII/DII page
+is behind Akamai bot-detection that blocks headless-browser fingerprints
+(same wall as NSE); NiftyTrader showed no obviously embedded historical
+data in a quick check; **Trendlyne worked** -- its public
+`trendlyne.com/macro-data/fii-dii/latest/` page embeds a genuine ~1-
+trading-month rolling window of real daily FII/DII cash flow directly in
+server-rendered HTML (`<table id="cash-table-main-pastmonth"
+data-jsondata="...">`, a JSON blob right in the HTML attribute) -- no
+Playwright, no browser fingerprint, no bot-blocking observed, reachable
+via a plain `urllib` GET. Confirmed to match NSE's own real published
+figures exactly for a cross-checked date (28 Aug 2026: FII net
+-Rs5,039.8cr, DII net +Rs5,183.9cr, matching nse_scraper.py's
+independently-fetched real data for the same date bit-for-bit). Since a
+single fetch always carries ~a month of trailing history, this closes the
+gap directly -- even a multi-week miss self-heals on the next fetch, no
+cloud archiver needed. `scanner.py`'s `refresh_all_data()` now calls this
+instead of `nse_scraper.fetch_cash_fii_dii()` (which remains in the
+codebase, still valid, usable as an occasional NSE cross-check per the
+strategy prompt's own "third-party aggregators ... cross-check against
+NSE as source of truth" guidance -- just no longer the primary daily path
+since it can't backfill). `confluence.py`'s date parsing was made
+format-agnostic (`_fii_dii_flow_signal` now tries both Trendlyne's ISO
+`YYYY-MM-DD` and NSE's `DD-Mon-YYYY`) since the table now legitimately
+mixes both. Validated end-to-end: HDFCBANK's real scan now shows all
+three real confluence signals (FII/DII flow, OI buildup, delivery% trend)
+computing genuine values instead of "insufficient data," using the ~23
+days of real history from this fetch plus the multi-day participant_oi/
+delivery_pct backfill Jonah ran -- and they tell a coherent story (Stage 4
++ FII net selling + OI building short + falling delivery% all agree
+bearish -> High conviction=89 on the bearish setup; bullish setup
+hard-capped Low=8 since everything conflicts).
 
 ### 2c. India VIX, sector indices
 ~~Same NSE Playwright flow, or available via the Kite Connect instrument
@@ -542,9 +572,11 @@ data:
 
 **Git**: repo initialized and pushed to `https://github.com/jonahrtimothy/sd_vcp` (public), Aug 31 2026. Reviewed staged diff for secrets before pushing -- only variable names/docstrings referencing `api_key`/`access_token` etc., no actual credential values (`.env`, `.kite_token_cache`, `venv/`, and everything under `data/` are all gitignored and were confirmed absent from the diff).
 
-**Cash FII/DII cloud-archiver**: discussed further with Jonah, specifics (repo name, public/private, `gh` CLI vs. manual repo creation) still being finalized -- not yet built. See Section 2b for the design.
+**Cash FII/DII gap** ✅ RESOLVED (Aug 31 2026) -- not via the cloud archiver (its smoke test proved GitHub Actions also gets blocked by NSE), but via `trendlyne_scraper.py`, a real alternate source that carries ~a month of trailing history per fetch. See Section 2b for the full story. The `nse-fii-dii-archiver` side-repo is kept only as a documented dead-end (its README explains why), not under active development.
 
 **Still not implemented**: "sector relative strength" (Section 5's other fundamentals criterion) -- needs a sector-index price data source not yet identified.
+
+**New idea surfaced during the FII/DII investigation, not built, flagged for later**: screener.in's "Shareholding Pattern" section (confirmed present on real pages, e.g. RELIANCE) has QUARTERLY FII/DII shareholding % PER STOCK -- a genuinely different, per-symbol institutional-ownership-trend signal (e.g. "FII holding fell from 22.60% to 17.19% over the last year") distinct from the market-wide daily cash flow number confluence.py already uses. Since `screener_scraper.py` already fetches this exact page for the earnings-growth filter, adding this would be a small parsing addition, not a new scraper. Worth considering as a `fundamentals.py` enhancement once the Kite-sourced regime filters (Nifty trend, USDINR/crude, sector RS -- see "Immediate next step" in PROJECT_CONTEXT.md) are done.
 
 ### Remaining phase detail:
 

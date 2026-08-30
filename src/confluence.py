@@ -128,7 +128,16 @@ def _fii_dii_flow_signal(direction: str, as_of_date: str) -> tuple:
         return 0.0, "no cash FII/DII data available"
 
     df = df.copy()
-    df["_date"] = pd.to_datetime(df["date"], format="%d-%b-%Y", errors="coerce")
+    # cash_fii_dii mixes date formats depending on source: NSE's own live
+    # endpoint gives 'DD-Mon-YYYY' (e.g. '28-Aug-2026'), trendlyne_scraper.py
+    # gives ISO 'YYYY-MM-DD'. Try both rather than assuming one.
+    parsed = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="coerce")
+    still_unparsed = parsed.isna()
+    if still_unparsed.any():
+        parsed[still_unparsed] = pd.to_datetime(
+            df.loc[still_unparsed, "date"], format="%d-%b-%Y", errors="coerce"
+        )
+    df["_date"] = parsed
     df = df.dropna(subset=["_date"])
     as_of = _parse_iso(as_of_date)
     df = df[df["_date"] <= as_of]
