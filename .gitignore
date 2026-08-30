@@ -1,0 +1,11 @@
+.env
+.kite_token_cache
+venv/
+__pycache__/
+*.pyc
+data/raw/
+data/*.db
+data/*.log
+src/data/data/
+*.log
+.streamlit/secrets.toml

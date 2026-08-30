@@ -1,0 +1,8 @@
+pandas
+numpy
+kiteconnect
+python-dotenv
+pyyaml
+playwright
+streamlit
+plotly

@@ -1,0 +1,93 @@
+# S&D + VCP Studio configuration.
+# Everything here is a tunable that should NOT be hardcoded in modules
+# (SYSTEM_BUILD_PROMPT.md Section 15). Edit this file directly, or (once
+# built) via the dashboard's Watchlist Management page.
+
+# ~30-40 liquid, F&O-eligible NSE names spread across sectors, as a starting
+# default (Section 6: "a curated 30-50 liquid stocks that have an active
+# futures segment"). This is a LIQUIDITY/ELIGIBILITY filter only -- futures
+# are traded, options are not, per the strategy prompt's instrument scope.
+# Edit freely; nothing else in the code depends on this exact list.
+watchlist:
+  - RELIANCE
+  - TCS
+  - HDFCBANK
+  - ICICIBANK
+  - INFY
+  - SBIN
+  - BHARTIARTL
+  - ITC
+  - LT
+  - KOTAKBANK
+  - AXISBANK
+  - HINDUNILVR
+  - BAJFINANCE
+  - MARUTI
+  - SUNPHARMA
+  - TITAN
+  - ULTRACEMCO
+  - ASIANPAINT
+  - NESTLEIND
+  - WIPRO
+  - ADANIENT
+  - ADANIPORTS
+  - TATAMOTORS
+  - TATASTEEL
+  - JSWSTEEL
+  - NTPC
+  - POWERGRID
+  - ONGC
+  - COALINDIA
+  - M&M
+  - BAJAJFINSV
+  - HCLTECH
+  - DRREDDY
+  - CIPLA
+  - GRASIM
+  - BRITANNIA
+  - EICHERMOT
+  - HEROMOTOCO
+  - TECHM
+  - INDUSINDBK
+
+detection:
+  zone_lookback: 3
+  zone_min_move_pct: 5.0
+  zone_max_base_bars: 20
+  vcp_contraction_ratio_threshold: 0.85
+  vcp_volume_multiple_trigger: 1.5
+  # stage.py needs at least this many trading days of OHLCV history
+  stage_min_bars: 210
+  # bootstrap fetch window (CALENDAR days) the very first time a symbol has
+  # no OHLCV history at all yet; after that, backfill only pulls what's
+  # missing. Needs real margin above stage_min_bars (210 TRADING days) --
+  # weekends/holidays mean ~300 calendar days only yields ~203 trading
+  # days in practice (confirmed against real Kite data), so this is set
+  # well above the naive 210-calendar-day guess.
+  ohlcv_bootstrap_days: 400
+
+# Section 7 real confluence data layer thresholds. First-pass engineering
+# judgment calls (same magnitudes previously hardcoded in confluence.py) --
+# calibrate against real results once more daily history accumulates.
+confluence:
+  fii_dii_net_threshold_cr: 1000.0
+  oi_buildup_lookback_days: 5
+  delivery_lookback_days: 5
+  delivery_trend_threshold_pp: 3.0
+  data_staleness_days: 3
+  bonus_fii_dii: 8.0
+  bonus_oi_buildup: 6.0
+  bonus_delivery_trend: 5.0
+
+fundamentals:
+  # screener.in data doesn't change day to day -- cache and only re-scrape
+  # this often, per symbol, rather than hitting screener.in every daily run
+  cache_max_age_days: 7
+  # minimum quarters of Sales/Net Profit/EPS history needed to judge a
+  # growth trend at all; below this the filter reports "insufficient_data"
+  # rather than guessing
+  min_quarters_required: 6
+
+data:
+  broker: kite_connect
+  db_path: data/studio.db

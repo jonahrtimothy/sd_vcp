@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sd-vcp-dashboard",
+      "runtimeExecutable": "venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "src/dashboard/app.py", "--server.port", "8501"],
+      "port": 8501
+    }
+  ]
+}
