@@ -78,6 +78,17 @@ confluence:
   bonus_fii_dii: 8.0
   bonus_oi_buildup: 6.0
   bonus_delivery_trend: 5.0
+  # Nifty trend alignment: does the setup direction agree with NIFTY 50's
+  # own Stage classification (same stage.py engine, run on the index)?
+  bonus_nifty_alignment: 6.0
+  # Sector relative strength: does the stock's own sector index outperform/
+  # underperform NIFTY 50 over this trailing window, in the direction that
+  # supports the setup? Toggled on/off via fundamentals.sector_strength_enabled
+  # below (checkbox on the dashboard) since it's a softer, more debatable
+  # signal than the earnings-growth filter.
+  sector_rs_lookback_days: 20
+  sector_rs_threshold_pp: 2.0
+  bonus_sector_rs: 6.0
 
 fundamentals:
   # screener.in data doesn't change day to day -- cache and only re-scrape
@@ -87,6 +98,9 @@ fundamentals:
   # growth trend at all; below this the filter reports "insufficient_data"
   # rather than guessing
   min_quarters_required: 6
+  # on/off switch for the sector-relative-strength confluence input --
+  # exposed as a checkbox on the dashboard (Watchlist Management page)
+  sector_strength_enabled: true
 
 data:
   broker: kite_connect

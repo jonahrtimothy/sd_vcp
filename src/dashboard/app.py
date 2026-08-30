@@ -240,6 +240,9 @@ def page_symbol_detail(cfg: dict):
                 c1.metric("FII/DII", f"{confluence.fii_dii_bonus:+.0f}")
                 c2.metric("OI buildup", f"{confluence.oi_buildup_bonus:+.0f}")
                 c3.metric("Delivery%", f"{confluence.delivery_bonus:+.0f}")
+                c4, c5 = st.columns(2)
+                c4.metric("Nifty alignment", f"{confluence.nifty_alignment_bonus:+.0f}")
+                c5.metric("Sector RS", f"{confluence.sector_rs_bonus:+.0f}")
 
         fund_row = db.get_fundamentals(symbol)
         st.markdown("**Fundamentals (Section 5)**")
@@ -286,6 +289,27 @@ def page_watchlist(cfg: dict):
     st.divider()
     st.subheader("Current watchlist")
     st.dataframe(pd.DataFrame({"symbol": current}), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("⚙️ Confluence settings")
+    sector_enabled = cfg.get("fundamentals", {}).get("sector_strength_enabled", True)
+    new_val = st.checkbox(
+        "Include sector relative strength in confluence scoring",
+        value=sector_enabled,
+        help=(
+            "Section 5: is the stock's sector currently outperforming or "
+            "underperforming NIFTY 50? On by default, but kept toggleable "
+            "since it's a softer, more debatable signal than the earnings-"
+            "growth filter. Turning it off makes this input contribute 0 "
+            "to every score (not hidden, just not scored) -- takes effect "
+            "on the next scan/calculation, no restart needed."
+        ),
+    )
+    if new_val != sector_enabled:
+        from config import set_sector_strength_enabled
+        set_sector_strength_enabled(new_val)
+        st.success(f"Sector relative strength scoring turned {'ON' if new_val else 'OFF'}.")
+        st.rerun()
 
 
 def page_scan_history():

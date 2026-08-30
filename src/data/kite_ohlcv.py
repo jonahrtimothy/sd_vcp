@@ -120,6 +120,7 @@ def fetch_historical_ohlcv(
     symbol: str,
     days_back: int = 100,
     exchange: str = "NSE",
+    segment: str | None = None,
     from_date: date_cls | None = None,
     to_date: date_cls | None = None,
     raise_on_empty: bool = True,
@@ -130,13 +131,17 @@ def fetch_historical_ohlcv(
     precise range (used by backfill_ohlcv to fetch exactly what's missing).
     Returns a DataFrame: columns = [symbol, date, open, high, low, close, volume].
 
+    `segment` defaults to matching `exchange` (correct for cash equities);
+    pass "INDICES" for an index like "NIFTY 50" or a sector index, same as
+    India VIX above.
+
     `raise_on_empty=False` (used by backfill_ohlcv) treats zero candles as
     a normal "nothing new yet" outcome (e.g. the range is only a weekend,
     or today's candle hasn't closed yet) rather than an error -- an empty
     range is expected here, not a scraper failure.
     """
     kite = get_authenticated_kite()
-    token = get_instrument_token(symbol, exchange)
+    token = get_instrument_token(symbol, exchange, segment=segment)
 
     to_date = to_date or datetime.now().date()
     from_date = from_date or (to_date - timedelta(days=days_back))
@@ -168,7 +173,7 @@ def fetch_historical_ohlcv(
     return df[["symbol", "date", "open", "high", "low", "close", "volume", "source"]]
 
 
-def backfill_ohlcv(symbol: str, bootstrap_days: int = 400) -> pd.DataFrame:
+def backfill_ohlcv(symbol: str, bootstrap_days: int = 400, segment: str | None = None) -> pd.DataFrame:
     """
     Fetch exactly the OHLCV history missing since the last saved date for
     `symbol` -- safe to call after any gap (laptop off for days/weeks): it
@@ -177,6 +182,11 @@ def backfill_ohlcv(symbol: str, bootstrap_days: int = 400) -> pd.DataFrame:
     back to `bootstrap_days` (default 400 calendar days, comfortably above
     stage.py's 210-TRADING-day minimum once weekends/holidays are factored
     in).
+
+    `segment="INDICES"` backfills an index (e.g. "NIFTY 50", "NIFTY BANK")
+    into the same `ohlcv` table as regular stocks -- it's keyed by
+    (symbol, date) already, so no schema change needed; stage.py/zones.py/
+    vcp.py work on it identically since they only care about OHLCV shape.
 
     Returns an empty DataFrame (no API call made) if already up to date.
     """
@@ -193,7 +203,7 @@ def backfill_ohlcv(symbol: str, bootstrap_days: int = 400) -> pd.DataFrame:
         print(f"{symbol}: already up to date (last saved date covers through today)")
         return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume", "source"])
 
-    return fetch_historical_ohlcv(symbol, from_date=from_date, to_date=today, raise_on_empty=False)
+    return fetch_historical_ohlcv(symbol, segment=segment, from_date=from_date, to_date=today, raise_on_empty=False)
 
 
 def fetch_india_vix(

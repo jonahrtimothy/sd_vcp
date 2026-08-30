@@ -39,6 +39,10 @@ USER_AGENT = (
 )
 
 GROWTH_ROWS = {"Sales", "Net Profit", "EPS in Rs"}
+# Banks/NBFCs/insurers report "Revenue" instead of "Sales" as their
+# top-line row (confirmed on a real page: HDFCBANK) -- same meaning for
+# our growth-trend purposes, normalized to the "Sales" key downstream.
+ROW_ALIASES = {"Revenue": "Sales"}
 MIN_REQUEST_GAP_SECONDS = 2.0  # be a light touch on screener.in -- this is a personal, low-frequency, weekly-cached scrape, not a crawler
 
 _last_request_time = 0.0
@@ -113,6 +117,7 @@ def _parse_quarters_table(quarters_section: str) -> dict:
         if not cells:
             continue
         label = _clean_text(cells[0]).rstrip("+").strip()
+        label = ROW_ALIASES.get(label, label)
         if label not in GROWTH_ROWS:
             continue
         values = [_parse_number(_clean_text(c)) for c in cells[1:]]
@@ -209,6 +214,12 @@ def fetch_fundamentals(symbol: str, min_quarters_required: int = 6) -> dict:
     raw_path = RAW_DIR / f"screener_{symbol}_{date.today().strftime('%Y%m%d')}.html"
     raw_path.write_text(html, encoding="utf-8")
 
+    # Parsed independently of the quarters table below so a row-naming
+    # quirk there (e.g. a company type this parser doesn't recognize yet)
+    # doesn't also lose sector/industry, which come from a separate part
+    # of the page.
+    sector, industry = _parse_sector(html)
+
     quarters_section = _extract_section(html, "quarters")
     if not quarters_section:
         raise ScraperError(
@@ -216,8 +227,20 @@ def fetch_fundamentals(symbol: str, min_quarters_required: int = 6) -> dict:
             f"page structure may have changed. Raw page saved to {raw_path}."
         )
 
-    parsed = _parse_quarters_table(quarters_section)
-    sector, industry = _parse_sector(html)
+    try:
+        parsed = _parse_quarters_table(quarters_section)
+    except ScraperError as e:
+        print(
+            f"WARNING: could not parse quarterly growth rows for {symbol} "
+            f"({e}) -- sector/industry still captured, earnings trend left "
+            f"as insufficient_data rather than guessed."
+        )
+        return {
+            "symbol": symbol, "sector": sector, "industry": industry,
+            "quarters_json": None, "eps_yoy_growth_pct": None,
+            "eps_yoy_growth_pct_prior": None, "profit_yoy_growth_pct": None,
+            "earnings_trend": "insufficient_data",
+        }
 
     eps_values = parsed["EPS in Rs"]
     profit_values = parsed["Net Profit"]

@@ -21,7 +21,8 @@ import pandas as pd
 
 import db
 from config import load_config
-from stage import StageResult
+from sector_mapping import get_sector_index
+from stage import StageResult, classify_stage
 from vcp import VCPSetup
 from zones import Zone
 
@@ -50,6 +51,12 @@ DATA_STALENESS_DAYS = _cfg.get("data_staleness_days", 3)
 BONUS_FII_DII = _cfg.get("bonus_fii_dii", 8.0)
 BONUS_OI_BUILDUP = _cfg.get("bonus_oi_buildup", 6.0)
 BONUS_DELIVERY_TREND = _cfg.get("bonus_delivery_trend", 5.0)
+BONUS_NIFTY_ALIGNMENT = _cfg.get("bonus_nifty_alignment", 6.0)
+SECTOR_RS_LOOKBACK_DAYS = _cfg.get("sector_rs_lookback_days", 20)
+SECTOR_RS_THRESHOLD_PP = _cfg.get("sector_rs_threshold_pp", 2.0)
+BONUS_SECTOR_RS = _cfg.get("bonus_sector_rs", 6.0)
+
+NIFTY_SYMBOL = "NIFTY 50"
 
 
 @dataclass
@@ -63,6 +70,8 @@ class ConfluenceResult:
     fii_dii_bonus: float
     oi_buildup_bonus: float
     delivery_bonus: float
+    nifty_alignment_bonus: float
+    sector_rs_bonus: float
     weighted_score: float
     conviction: Conviction
     notes: str
@@ -74,7 +83,8 @@ class ConfluenceResult:
             f"alignment={self.alignment} (x{self.multiplier}) | "
             f"raw_vcp={self.raw_vcp_score:.0f} zone={self.zone_bonus:+.0f} "
             f"fii_dii={self.fii_dii_bonus:+.0f} oi={self.oi_buildup_bonus:+.0f} "
-            f"delivery={self.delivery_bonus:+.0f} "
+            f"delivery={self.delivery_bonus:+.0f} nifty={self.nifty_alignment_bonus:+.0f} "
+            f"sector_rs={self.sector_rs_bonus:+.0f} "
             f"-> weighted={self.weighted_score:.1f} | "
             f"CONVICTION: {self.conviction} | {self.notes}"
         )
@@ -254,6 +264,85 @@ def _delivery_trend_signal(symbol: Optional[str], as_of_date: str) -> tuple:
     return 0.0, f"{label} - roughly flat, no clear signal"
 
 
+def _nifty_alignment_signal(direction: str, as_of_date: str) -> tuple:
+    """Does the setup direction agree with NIFTY 50's OWN Stage
+    classification? Reuses stage.py as-is on the index's own OHLCV --
+    no new analytical logic, just the same engine pointed at the market
+    instead of the stock."""
+    nifty_df = db.get_ohlcv(NIFTY_SYMBOL, end_date=as_of_date)
+    if len(nifty_df) < 210:
+        return 0.0, f"insufficient NIFTY 50 history ({len(nifty_df)} bars, need >=210) -- Nifty alignment not computed"
+
+    nifty_stage = classify_stage(nifty_df)
+    if nifty_stage.stage == "insufficient_data":
+        return 0.0, "NIFTY 50 stage classification unavailable"
+
+    alignment, _ = _classify_alignment(direction, nifty_stage.stage)
+    label = f"NIFTY 50 is {nifty_stage.stage}"
+
+    if alignment == "aligned":
+        return BONUS_NIFTY_ALIGNMENT, f"{label} - aligned with {direction} setup"
+    if alignment == "conflicting":
+        return -BONUS_NIFTY_ALIGNMENT, f"{label} - conflicts with {direction} setup"
+    return 0.0, f"{label} - neutral relative to {direction} setup"
+
+
+def _sector_strength_signal(direction: str, symbol: Optional[str], as_of_date: str) -> tuple:
+    """Section 5: "is the stock's sector itself currently in favor
+    (outperforming the broader index) or out of favor". Toggleable via
+    config.yaml's fundamentals.sector_strength_enabled (dashboard
+    checkbox) -- re-read fresh each call (not cached at import time like
+    the other thresholds above) so toggling takes effect immediately
+    without restarting the dashboard."""
+    if not load_config().get("fundamentals", {}).get("sector_strength_enabled", True):
+        return 0.0, "sector relative strength check disabled (config)"
+
+    if not symbol:
+        return 0.0, "no symbol provided, sector relative strength skipped"
+
+    fund = db.get_fundamentals(symbol)
+    sector = fund.get("sector") if fund else None
+    if not sector:
+        return 0.0, f"no cached sector for {symbol} -- relative strength not computed"
+
+    sector_index = get_sector_index(sector)
+    if not sector_index:
+        return 0.0, f"sector '{sector}' has no mapped NIFTY index -- relative strength not computed"
+
+    as_of = _parse_iso(as_of_date)
+    lookback_start = (as_of - timedelta(days=SECTOR_RS_LOOKBACK_DAYS * 2)).isoformat()  # *2: calendar days to comfortably cover N trading days
+
+    sector_df = db.get_ohlcv(sector_index, start_date=lookback_start, end_date=as_of_date)
+    nifty_df = db.get_ohlcv(NIFTY_SYMBOL, start_date=lookback_start, end_date=as_of_date)
+    if len(sector_df) < SECTOR_RS_LOOKBACK_DAYS or len(nifty_df) < SECTOR_RS_LOOKBACK_DAYS:
+        return 0.0, (
+            f"insufficient {sector_index}/NIFTY 50 history to compute "
+            f"{SECTOR_RS_LOOKBACK_DAYS}-day relative strength "
+            f"(have {len(sector_df)}/{len(nifty_df)} days)"
+        )
+
+    sector_return = (sector_df["close"].iloc[-1] - sector_df["close"].iloc[-SECTOR_RS_LOOKBACK_DAYS]) / sector_df["close"].iloc[-SECTOR_RS_LOOKBACK_DAYS] * 100
+    nifty_return = (nifty_df["close"].iloc[-1] - nifty_df["close"].iloc[-SECTOR_RS_LOOKBACK_DAYS]) / nifty_df["close"].iloc[-SECTOR_RS_LOOKBACK_DAYS] * 100
+    diff = sector_return - nifty_return
+
+    label = f"{sector_index} {SECTOR_RS_LOOKBACK_DAYS}d return {sector_return:+.1f}% vs NIFTY 50 {nifty_return:+.1f}%"
+
+    if diff >= SECTOR_RS_THRESHOLD_PP:
+        rs_state = "outperforming"
+    elif diff <= -SECTOR_RS_THRESHOLD_PP:
+        rs_state = "underperforming"
+    else:
+        return 0.0, f"{label} - roughly in line, no clear sector edge"
+
+    # bullish setup wants an in-favor (outperforming) sector; bearish wants
+    # an out-of-favor (underperforming) one -- same aligned/conflicting
+    # logic as Stage, just applied to sector vs. market instead of stock vs. MAs
+    is_aligned = (direction == "bullish" and rs_state == "outperforming") or (direction == "bearish" and rs_state == "underperforming")
+    if is_aligned:
+        return BONUS_SECTOR_RS, f"{label} - {rs_state} sector aligned with {direction} setup"
+    return -BONUS_SECTOR_RS, f"{label} - {rs_state} sector conflicts with {direction} setup"
+
+
 def compute_confluence(
     stage_result: StageResult,
     zones: List[Zone],
@@ -276,11 +365,14 @@ def compute_confluence(
     fii_dii_bonus, fii_dii_note = _fii_dii_flow_signal(direction, as_of_date)
     oi_bonus, oi_note = _participant_oi_signal(direction, as_of_date)
     delivery_bonus, delivery_note = _delivery_trend_signal(symbol, as_of_date)
-    data_notes = [fii_dii_note, oi_note, delivery_note]
+    nifty_bonus, nifty_note = _nifty_alignment_signal(direction, as_of_date)
+    sector_rs_bonus, sector_rs_note = _sector_strength_signal(direction, symbol, as_of_date)
+    data_notes = [fii_dii_note, oi_note, delivery_note, nifty_note, sector_rs_note]
 
     weighted = (
         raw_score * multiplier + zone_bonus
         + fii_dii_bonus + oi_bonus + delivery_bonus
+        + nifty_bonus + sector_rs_bonus
     )
     weighted = max(0.0, min(100.0, weighted))
 
@@ -311,6 +403,8 @@ def compute_confluence(
         fii_dii_bonus=fii_dii_bonus,
         oi_buildup_bonus=oi_bonus,
         delivery_bonus=delivery_bonus,
+        nifty_alignment_bonus=nifty_bonus,
+        sector_rs_bonus=sector_rs_bonus,
         weighted_score=round(weighted, 1),
         conviction=conviction,
         notes=notes,

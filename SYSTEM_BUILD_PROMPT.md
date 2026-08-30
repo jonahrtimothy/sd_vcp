@@ -173,10 +173,11 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   had unparseable cells, correctly NOT fabricated into a verdict), and a
   fake ticker (correctly raised ScraperError on 404). Throttled to one
   request per 2s minimum -- light touch, matches the weekly-cache design
-  below, not a crawler. **Scope note**: only the earnings-growth half of
-  Section 5 is implemented; "sector relative strength" needs sector-index
-  price history, a data source not wired in yet -- flagged, not silently
-  assumed.
+  below, not a crawler. Also provides the sector/industry classification
+  `confluence.py`'s sector-relative-strength signal uses (Step 13, see
+  below) -- parsed independently of the quarterly-growth table so a
+  row-naming quirk in one doesn't lose the other (real bug found and
+  fixed on HDFCBANK, a bank -- see Step 13 detail).
 - `fundamentals.py` (NEW) — Section 5's quality filter, applied BEFORE the
   technical scan per the strategy prompt's intended order. Caches
   screener_scraper.py's output in the new `fundamentals` DB table and only
@@ -248,11 +249,9 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
 **Known open items** (see Section "What's NOT built yet" further down):
 Windows Task Scheduler automation not set up yet (needs Jonah's explicit
 go-ahead before creating a standing scheduled task); the cash FII/DII
-cloud-archiver idea (see Section 2b) discussed but not built -- needs a
-few logistics decisions (new repo name, public/private) before it can be
-created, since it's a genuinely separate project/repo by design, not part
-of this codebase; "sector relative strength" half of the fundamentals
-filter (Section 5) not implemented, needs a sector-index price data source.
+cloud-archiver idea (see Section 2b) -- RESOLVED since, see Step 11/13
+below (Trendlyne replaced the need for it); "sector relative strength"
+half of the fundamentals filter (Section 5) -- RESOLVED, see Step 13.
 
 ## 2. Data sources — the decision and the setup
 
@@ -361,7 +360,8 @@ above. Chosen over NSE specifically because Kite's date-range API
 backfills cleanly across any gap, which an NSE Playwright scrape of VIX
 would not (same live-only limitation as cash FII/DII above). Sector
 indices (for the "sector relative strength" half of the fundamentals
-filter, Section 5 of the strategy prompt) are still not wired in.
+filter, Section 5 of the strategy prompt) are now wired in too -- same
+Kite-INDICES pattern, see Step 13.
 
 ## 3. Data Schema (SQLite)
 
@@ -470,7 +470,7 @@ Keep these as separate, independently testable modules — this is what makes th
 - `src/db.py` — thin wrapper around SQLite: `upsert_ohlcv(df)`, `get_ohlcv(symbol, start, end)`, equivalent for each table above
 - `src/zones.py`, `src/vcp.py` — already exist, keep signatures as-is after the zone-merge fix
 - `src/stage.py` — new module: `classify_stage(ohlcv_df) -> Literal['Stage 1','Stage 2','Stage 3','Stage 4']` per Section 2 of the strategy prompt (MA-based)
-- `src/fundamentals.py` — DONE (Step 10): earnings-growth half of Section 5's filter, backed by `src/data/screener_scraper.py` (screener.in, weekly-cached). "Sector relative strength" half still needs a sector-index price data source — not decided yet.
+- `src/fundamentals.py` — DONE (Step 10): earnings-growth half of Section 5's filter, backed by `src/data/screener_scraper.py` (screener.in, weekly-cached). "Sector relative strength" half also DONE (Step 13) -- lives in `confluence.py` as a toggleable scoring input rather than a `fundamentals.py` eligibility filter (softer/more debatable signal than earnings growth, per discussion with Jonah), backed by `src/sector_mapping.py` + Kite sector-index OHLCV.
 - `src/confluence.py` — implements Section 7 scoring: takes zone + VCP + participant OI + delivery% + FII/DII + VIX, returns a composite score and conviction label
 - `src/scanner.py` — orchestrates: for each symbol in watchlist, call the above in sequence, write to `scan_results`
 - `src/dashboard/app.py` — Streamlit entrypoint
@@ -560,9 +560,11 @@ data:
 
 **Phase 5 — Universe scanner** ✅ DONE (Step 10): `scanner.py` orchestrates fundamentals -> zones -> VCP -> stage -> confluence across the whole watchlist, persisting to zones/vcp_setups/scan_results; `scripts/refresh_data.py` + `scripts/run_scan.py` are the daily-use entrypoints. Validated end-to-end on real data (RELIANCE correctly excluded by the new fundamentals filter; HDFCBANK produced two distinct real bullish/bearish verdicts).
 
-**Phase 6 — Studio dashboard** ✅ DONE (Step 10): all 4 pages built in `src/dashboard/app.py`, validated by actually running `streamlit run` and driving it in a real browser against the real DB (see Section 1 above for detail).
+**Phase 6 — Studio dashboard** ✅ DONE (Step 10, extended Step 12): 5 pages now (Daily Scan, Symbol Detail, Position Calculator, Watchlist Management, Scan History) in `src/dashboard/app.py`, validated by actually running `streamlit run` and driving it in a real browser against the real DB (see Section 1 above for detail).
 
 **Phase 7 — Backtest harness** ❌ NOT STARTED (correctly deferred — not needed yet).
+
+**Beyond the original 7 phases**: Position Calculator (Step 12) and Nifty-alignment + sector-relative-strength confluence signals (Step 13) -- both DONE, see Section 1 above. MVP scope explicitly locked to equities-only; commodities and index-as-tradeable-symbol support deferred to a later phase (Jonah's decision, Aug 31 2026).
 
 **Windows Task Scheduler automation (Section 13)** ✅ DONE (Aug 31 2026, with Jonah's explicit go-ahead): task `SD_VCP_Studio_DailyRefresh` registered, runs `scripts\run_daily_refresh.ps1` (which calls `refresh_data.py` then `run_scan.py`, logging to `data/task_scheduler.log`) weekdays at 6:45 PM local time, `StartWhenAvailable=True` so a missed trigger (laptop off) runs as soon as the machine is next available -- confirmed via `Get-ScheduledTask`/`Get-ScheduledTaskInfo` (next run correctly showed 2026-08-31 18:45 +05:30, DaysOfWeek=Mon-Fri).
 
@@ -574,9 +576,14 @@ data:
 
 **Cash FII/DII gap** ✅ RESOLVED (Aug 31 2026) -- not via the cloud archiver (its smoke test proved GitHub Actions also gets blocked by NSE), but via `trendlyne_scraper.py`, a real alternate source that carries ~a month of trailing history per fetch. See Section 2b for the full story. The `nse-fii-dii-archiver` side-repo is kept only as a documented dead-end (its README explains why), not under active development.
 
-**Still not implemented**: "sector relative strength" (Section 5's other fundamentals criterion) -- needs a sector-index price data source not yet identified.
+**Nifty trend alignment + sector relative strength: DONE (Step 13, Aug 31 2026)**, closing the last two open confluence/fundamentals gaps:
+- `confluence.py` gained `_nifty_alignment_signal()` -- reuses `stage.py` completely as-is on NIFTY 50's own OHLCV (no new analytical logic, same engine just pointed at the index; the index's OHLCV lives in the SAME `ohlcv` table as stocks, keyed by (symbol, date) already, so no schema change) and applies the same aligned/neutral/conflicting logic already used for the stock's own Stage.
+- `confluence.py` gained `_sector_strength_signal()` -- compares the stock's sector index return vs. NIFTY 50's return over a trailing window (config: `sector_rs_lookback_days`, default 20), classifies outperforming/underperforming/in-line, and scores alignment with the setup direction the same way. Sector name -> Kite index mapping lives in new `src/sector_mapping.py` (deliberately incomplete -- only sectors with a clear, confirmed-real Kite INDICES instrument are mapped; an unmapped sector honestly reports "not computed," never a guessed loose match).
+- Both are TOGGLEABLE independently of each other: Nifty alignment always runs (it's cheap and unambiguous); sector strength specifically has an on/off switch (`fundamentals.sector_strength_enabled` in config.yaml, default true) exposed as a dashboard checkbox on Watchlist Management, per Jonah's explicit request, since it's a softer/more debatable signal than the earnings-growth filter. The config is re-read fresh on every call (not cached at import time like the other confluence thresholds) so toggling the checkbox takes effect immediately, no dashboard restart needed -- confirmed via a real toggle-and-verify test (checkbox off -> config.yaml correctly shows `false`, back on -> `true`, comments preserved throughout).
+- `scanner.py`'s `refresh_all_data()` now also backfills NIFTY 50 plus every sector index in the mapping table (via the same `backfill_ohlcv(..., segment="INDICES")` path used for VIX) -- fetches all of them unconditionally rather than only whichever sectors happen to be in the current watchlist, avoiding a chicken-and-egg problem (which sectors are needed isn't known until fundamentals.py's cache is populated, which happens in `run_scan`, which runs after `refresh_all_data`).
+- Both signals were validated as gracefully honest, NOT validated end-to-end with real index data yet: the Kite access_token expired partway through this session's testing (normal daily expiry, not a bug) before the new NIFTY 50/sector-index fetch could be exercised live. Real scan output confirms the correct honest fallback behavior in the meantime (`"insufficient NIFTY 50 history (0 bars, need >=210) -- Nifty alignment not computed"`, `"insufficient NIFTY FIN SERVICE/NIFTY 50 history..."`) -- Jonah re-running `kite_auth.py login`/`exchange` and then `refresh_data.py` is the outstanding step to get real values flowing.
 
-**New idea surfaced during the FII/DII investigation, not built, flagged for later**: screener.in's "Shareholding Pattern" section (confirmed present on real pages, e.g. RELIANCE) has QUARTERLY FII/DII shareholding % PER STOCK -- a genuinely different, per-symbol institutional-ownership-trend signal (e.g. "FII holding fell from 22.60% to 17.19% over the last year") distinct from the market-wide daily cash flow number confluence.py already uses. Since `screener_scraper.py` already fetches this exact page for the earnings-growth filter, adding this would be a small parsing addition, not a new scraper. Worth considering as a `fundamentals.py` enhancement once the Kite-sourced regime filters (Nifty trend, sector RS) are done.
+**Real bug found and fixed as a side effect of this work**: testing the sector mapping on HDFCBANK (a real watchlist symbol) surfaced that `screener_scraper.py`'s quarterly-growth parser only recognized a "Sales" row label, but banks/NBFCs/insurers report "Revenue" instead on screener.in -- meaning every financial-sector stock was silently failing fundamentals scraping AND losing its sector/industry info entirely (the sector parse never ran because the exception from the missing "Sales" row fired first). Fixed two ways: (1) `ROW_ALIASES = {"Revenue": "Sales"}` normalizes the label so financial-sector earnings growth now parses correctly (confirmed real: HDFCBANK now shows `accelerating`, EPS YoY=17.9%, sector="Financial Services" -- previously `insufficient_data`/`sector=unknown`); (2) sector/industry parsing was moved to run independently of the quarterly-growth table, with quarters-table failures now degrading gracefully (sector/industry still captured, earnings_trend left honestly as `insufficient_data`) instead of losing everything on any row-naming quirk.
 
 **Scope decisions locked in with Jonah (Aug 31 2026)**: MVP = equities only -- commodities (gold, crude, etc.) and other global-market parameters explicitly deferred to a later phase, not part of this build; USDINR/crude dropped from the near-term plan entirely on this basis (they'd only ever have been a confluence INPUT for equity setups, never tradeable instruments themselves, and even that is deferred now). Indexes (NIFTY 50, BANK NIFTY) as tradeable watchlist symbols also deferred, same reasoning -- though the detection ENGINE already works on index OHLCV as-is (proven by the Nifty-trend-alignment feature below, which runs stage.py on NIFTY 50's own price data); what's still needed for full index support is fundamentals.py skipping screener.in for index symbols, the OI-buildup signal reading `index_fut` instead of `stock_fut`, and delivery% reporting "not applicable" rather than an always-empty lookup -- none hard, just not built.
 

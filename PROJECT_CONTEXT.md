@@ -123,14 +123,34 @@ elsewhere on the page was silently computed against the WRONG lot size --
 caught via a real math check (500,000 capital gave Lots=39 instead of the
 correct 0) before being trusted.
 
-**Immediate next step**: build the Kite-sourced regime filters -- Nifty
-trend alignment and (closes the last fundamentals.py gap) sector relative
-strength via NSE sector indices, both confirmed available through Kite's
-own instrument list the same way India VIX was. Sector strength gets a
-config.yaml on/off toggle exposed as a dashboard checkbox, per Jonah's
-request, since it's a softer/more debatable signal than the earnings-
-growth filter. USDINR/crude and commodities/indexes generally: deferred,
-see the scope decisions above.
+**Nifty trend alignment + sector relative strength: DONE (Aug 31 2026).**
+Both confluence.py signals reuse existing engines rather than new logic:
+Nifty alignment just runs stage.py on NIFTY 50's own price data (stored in
+the same `ohlcv` table as stocks); sector RS compares the stock's sector
+index return to NIFTY 50's over a trailing window, using a new
+`sector_mapping.py` (screener.in sector name -> Kite index, deliberately
+incomplete -- unmapped sectors honestly report "not computed," never
+guessed). Sector strength has the on/off checkbox Jonah asked for
+(Watchlist Management page), confirmed working with an actual toggle-and-
+verify test. Side-effect bug found and fixed: `screener_scraper.py` only
+recognized "Sales" as the top-line row, but banks/NBFCs report "Revenue"
+instead -- meaning every financial-sector stock (a real watchlist symbol,
+HDFCBANK) was silently failing fundamentals AND losing its sector
+classification entirely. Fixed (alias the label; parse sector
+independently of the growth table so one failure doesn't lose the other)
+and confirmed: HDFCBANK now correctly shows `accelerating`, EPS
+YoY=17.9%, sector="Financial Services".
+
+**Blocked mid-testing, needs Jonah**: the Kite access_token expired
+partway through validating this (normal daily expiry) before the new
+NIFTY 50/sector-index OHLCV fetch could run live. Everything degrades
+honestly in the meantime (scan output correctly shows "insufficient NIFTY
+50 history... not computed" rather than a wrong number), but re-running
+`kite_auth.py login`/`exchange` then `refresh_data.py` is needed to get
+real values flowing through these two new signals.
+
+USDINR/crude and commodities/indexes generally remain deferred, per the
+scope decisions above.
 
 ## What this project is
 A personal trading analysis system for Jonah, combining supply/demand zone

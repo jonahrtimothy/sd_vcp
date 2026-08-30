@@ -72,6 +72,18 @@ def refresh_all_data(cfg: dict) -> None:
     except Exception as e:
         log.error(f"India VIX backfill failed -- {e}")
 
+    log.info("=== Refreshing NIFTY 50 + sector indices (Kite, backfill) -- for Nifty-alignment and sector-RS confluence signals ===")
+    from sector_mapping import SECTOR_TO_NIFTY_INDEX
+    index_symbols = {"NIFTY 50"} | set(SECTOR_TO_NIFTY_INDEX.values())
+    for index_symbol in sorted(index_symbols):
+        try:
+            result = backfill_ohlcv(index_symbol, bootstrap_days=bootstrap_days, segment="INDICES")
+            if not result.empty:
+                db.upsert_ohlcv(result)
+                log.info(f"{index_symbol}: +{len(result)} OHLCV rows")
+        except Exception as e:
+            log.error(f"{index_symbol}: index backfill failed -- {e}")
+
     log.info("=== Refreshing participant OI (NSE, backfill) ===")
     try:
         oi_summary = backfill_participant_oi(db, days=15)
