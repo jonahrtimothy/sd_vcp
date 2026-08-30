@@ -11,6 +11,7 @@ Four pages (SYSTEM_BUILD_PROMPT.md Section 7):
 """
 
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 SRC_DIR = Path(__file__).parent.parent
@@ -29,6 +30,36 @@ from vcp import detect_vcp
 from zones import detect_zones
 from charts import build_price_chart
 from style import conviction_badge, direction_badge, stage_badge
+
+
+def _parse_any_date(raw: str):
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def render_freshness_panel():
+    freshness = db.get_data_freshness()
+    cols = st.columns(len(freshness))
+    today = date.today()
+    for col, (source, raw_date) in zip(cols, freshness.items()):
+        parsed = _parse_any_date(raw_date)
+        if parsed is None:
+            col.metric(source, "no data", delta="never fetched", delta_color="off")
+            continue
+        age_days = (today - parsed).days
+        if age_days <= 3:
+            color = "normal"
+        elif age_days <= 7:
+            color = "off"
+        else:
+            color = "inverse"
+        col.metric(source, str(parsed), delta=f"{age_days}d ago", delta_color=color)
 
 st.set_page_config(page_title="S&D + VCP Studio", layout="wide", page_icon="📈")
 db.init_db()
@@ -92,7 +123,20 @@ def page_daily_scan(cfg: dict):
     render_scan_table(scan_df)
 
     st.divider()
-    if st.button("🔄 Refresh data + re-run scan now", type="primary"):
+    st.subheader("Data freshness")
+    st.caption("Last saved date per source -- if the scheduled evening refresh has been missed for a few days (laptop off, etc.), it'll show up here as a gap rather than silently going stale.")
+    render_freshness_panel()
+
+    st.divider()
+    st.caption(
+        "This backfills EVERYTHING since whatever was last saved -- OHLCV, India VIX, "
+        "participant OI, delivery%, and cash FII/DII -- then re-runs the full scan. "
+        "Safe to click any time, including after being away for days; it always catches "
+        "up rather than assuming a fixed window. (Cash FII/DII is the one exception: "
+        "NSE's live endpoint only ever has the last ~1-2 days, so a longer gap in that "
+        "one source specifically can't be recovered this way -- see PROJECT_CONTEXT.md.)"
+    )
+    if st.button("🔄 Backfill everything + re-run scan now", type="primary"):
         with st.spinner("Refreshing data (Kite + NSE) and re-running the scan... this can take a few minutes."):
             try:
                 from scanner import refresh_all_data, run_scan

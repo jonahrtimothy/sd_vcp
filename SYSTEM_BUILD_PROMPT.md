@@ -534,7 +534,17 @@ data:
 
 **Phase 7 — Backtest harness** ❌ NOT STARTED (correctly deferred — not needed yet).
 
-**Not part of the original phase list, discussed but not yet built**: the cash FII/DII cloud-archiver (separate repo/project, see Section 2b) — needs Jonah's decision on repo name/visibility before it can be created. Windows Task Scheduler automation (Section 13) — code is ready to be scheduled (`scripts/refresh_data.py` then `scripts/run_scan.py`), but creating a standing scheduled task needs Jonah's explicit go-ahead first (time of day, task name) before being set up, since it's persistent OS-level automation. "Sector relative strength" (Section 5's other fundamentals criterion) — not implemented, needs a sector-index price data source not yet identified.
+**Windows Task Scheduler automation (Section 13)** ✅ DONE (Aug 31 2026, with Jonah's explicit go-ahead): task `SD_VCP_Studio_DailyRefresh` registered, runs `scripts\run_daily_refresh.ps1` (which calls `refresh_data.py` then `run_scan.py`, logging to `data/task_scheduler.log`) weekdays at 6:45 PM local time, `StartWhenAvailable=True` so a missed trigger (laptop off) runs as soon as the machine is next available -- confirmed via `Get-ScheduledTask`/`Get-ScheduledTaskInfo` (next run correctly showed 2026-08-31 18:45 +05:30, DaysOfWeek=Mon-Fri).
+
+**Dashboard data-freshness panel** ✅ DONE (Aug 31 2026): `db.get_data_freshness()` + a new panel on the Daily Scan page show the last saved date per raw source (ohlcv/india_vix/participant_oi/delivery_pct/cash_fii_dii) with age-based color coding, so a gap (Task Scheduler missed a few days) is visible at a glance rather than only discoverable by noticing odd scan results. The existing "refresh everything" button's caption was also rewritten to explicitly state what it backfills and the one exception (cash FII/DII). Validated by running the dashboard again in a real browser.
+
+**Real bug fixed, found by the user actually running the code**: `nse_scraper.py`'s CLI unconditionally tried to parse `sys.argv[2]` as a `YYYY-MM-DD` date regardless of mode, so `backfill-oi 15` crashed trying to parse `"15"` as a date. Fixed to only parse a date for the `oi`/`delivery` modes; `backfill-*` modes parse their second arg as an integer day-count instead. Not yet re-confirmed against live NSE data (same network-block limitation as before) -- Jonah re-running this on his own machine is still the outstanding validation step.
+
+**Git**: repo initialized and pushed to `https://github.com/jonahrtimothy/sd_vcp` (public), Aug 31 2026. Reviewed staged diff for secrets before pushing -- only variable names/docstrings referencing `api_key`/`access_token` etc., no actual credential values (`.env`, `.kite_token_cache`, `venv/`, and everything under `data/` are all gitignored and were confirmed absent from the diff).
+
+**Cash FII/DII cloud-archiver**: discussed further with Jonah, specifics (repo name, public/private, `gh` CLI vs. manual repo creation) still being finalized -- not yet built. See Section 2b for the design.
+
+**Still not implemented**: "sector relative strength" (Section 5's other fundamentals criterion) -- needs a sector-index price data source not yet identified.
 
 ### Remaining phase detail:
 

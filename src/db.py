@@ -523,6 +523,26 @@ def get_scan_dates() -> list:
         conn.close()
 
 
+def get_data_freshness() -> dict:
+    """Latest saved date per raw data source -- lets the dashboard show at
+    a glance whether a source has fallen behind (e.g. Task Scheduler
+    didn't run for a few days), rather than that only being discoverable
+    by noticing missing/odd scan results."""
+    conn = get_connection()
+    try:
+        return {
+            "ohlcv (any symbol)": conn.execute("SELECT MAX(date) FROM ohlcv").fetchone()[0],
+            "india_vix": conn.execute("SELECT MAX(date) FROM india_vix").fetchone()[0],
+            "participant_oi": conn.execute("SELECT MAX(date) FROM participant_oi").fetchone()[0],
+            "delivery_pct": conn.execute("SELECT MAX(date) FROM delivery_pct").fetchone()[0],
+            "cash_fii_dii": conn.execute(
+                "SELECT MAX(date) FROM cash_fii_dii"
+            ).fetchone()[0],  # note: dates here are 'DD-Mon-YYYY' (NSE's own format), not ISO
+        }
+    finally:
+        conn.close()
+
+
 def table_counts() -> dict:
     """Quick summary of row counts per table — useful for sanity checks."""
     conn = get_connection()

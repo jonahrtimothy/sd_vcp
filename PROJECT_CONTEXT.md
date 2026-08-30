@@ -25,17 +25,27 @@ described. HDFCBANK produced two distinct real verdicts in the same run
 Low), extending the Stage-gate validation to a second real stock beyond
 RELIANCE.
 
-**Two things discussed with Jonah but deliberately not yet built, both
-needing his go-ahead first**: (1) Windows Task Scheduler automation for
-the evening refresh+scan (code is ready; creating a standing scheduled
-task is a persistent-automation decision, not something to do
-unilaterally) -- see SYSTEM_BUILD_PROMPT.md Section 13; (2) a genuinely
-SEPARATE small cloud-hosted project (its own repo, explicitly not merged
-into this codebase) that runs a daily GitHub Actions job to archive cash
-FII/DII data -- the one data source here that can't backfill gaps through
-NSE's live-only endpoint. Needs a repo name/visibility decision, and
-either `gh` CLI or Jonah creating the empty repo manually. See
-SYSTEM_BUILD_PROMPT.md Section 2b for the full design.
+**Follow-up, same day**: Jonah gave the go-ahead on Task Scheduler and git,
+both now done. Windows Task Scheduler task `SD_VCP_Studio_DailyRefresh` is
+registered (weekdays 6:45 PM, `StartWhenAvailable` so a missed day catches
+up automatically once the laptop is next on). The project is now a git
+repo, pushed to `https://github.com/jonahrtimothy/sd_vcp` (public) --
+reviewed the staged diff for secrets before pushing (none found; `.env`/
+`.kite_token_cache`/`venv/`/`data/` all correctly gitignored). The
+dashboard also gained a data-freshness panel (last saved date per source,
+color-coded by age) so a Task Scheduler gap is visible at a glance. One
+real bug found and fixed from Jonah actually running the new backfill CLI:
+`nse_scraper.py`'s argument parsing crashed on `backfill-oi 15` (tried to
+parse `"15"` as a date) -- fixed, but still needs Jonah's re-confirmation
+since NSE remains unreachable from this session.
+
+**Still being discussed, not yet built**: a genuinely SEPARATE small
+cloud-hosted project (its own repo, explicitly not merged into this
+codebase) that runs a daily GitHub Actions job to archive cash FII/DII
+data -- the one data source here that can't backfill gaps through NSE's
+live-only endpoint. Needs a repo name/visibility decision, and either `gh`
+CLI or Jonah creating the empty repo manually. See SYSTEM_BUILD_PROMPT.md
+Section 2b for the full design.
 
 **One real limitation hit this session**: nse_scraper.py's new backfill
 functions could not be validated against live NSE data from within Claude
