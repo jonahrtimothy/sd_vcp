@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import db
 
 INSTRUMENTS_CACHE = Path(__file__).parent / "data" / "kite_instruments.csv"
+NFO_INSTRUMENTS_CACHE = Path(__file__).parent / "data" / "kite_nfo_instruments.csv"
 
 VIX_TRADINGSYMBOL = "INDIA VIX"
 VIX_SEGMENT = "INDICES"
@@ -73,6 +74,46 @@ def get_instrument_token(symbol: str, exchange: str = "NSE", segment: str | None
     token = int(match.iloc[0]["instrument_token"])
     print(f"Resolved {symbol} -> instrument_token {token}")
     return token
+
+
+def get_lot_size(symbol: str) -> int | None:
+    """
+    Real stock-futures lot size for `symbol`, from Kite's NFO (F&O)
+    instrument list -- for position sizing (Section 8 of the strategy
+    prompt: "Position size = f(stop distance, max risk per trade)",
+    rounded to lot multiples, not a theoretical share count). Picks the
+    nearest (soonest) expiry FUT contract. Returns None (never guesses)
+    if Kite isn't reachable or the symbol has no F&O contract.
+    """
+    try:
+        kite = get_authenticated_kite()
+    except Exception:
+        return None
+
+    refresh_needed = True
+    if NFO_INSTRUMENTS_CACHE.exists():
+        cache_age_hours = (
+            datetime.now().timestamp() - NFO_INSTRUMENTS_CACHE.stat().st_mtime
+        ) / 3600
+        refresh_needed = cache_age_hours > 24
+
+    try:
+        if refresh_needed:
+            print("Refreshing NFO instruments list from Kite (once-daily)...")
+            df = pd.DataFrame(kite.instruments("NFO"))
+            NFO_INSTRUMENTS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(NFO_INSTRUMENTS_CACHE, index=False)
+        else:
+            df = pd.read_csv(NFO_INSTRUMENTS_CACHE)
+    except Exception:
+        return None
+
+    match = df[(df["name"] == symbol) & (df["instrument_type"] == "FUT")]
+    if match.empty:
+        return None
+
+    match = match.sort_values("expiry")
+    return int(match.iloc[0]["lot_size"])
 
 
 def fetch_historical_ohlcv(

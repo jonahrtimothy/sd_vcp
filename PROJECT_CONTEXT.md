@@ -77,11 +77,60 @@ multi-day participant_oi/delivery_pct history too -- confirmed via a real
 scan where the OI-buildup and delivery%-trend confluence signals compute
 actual values instead of "insufficient data" for the first time.
 
-**Immediate next step**: build the Kite-sourced regime filters discussed
-with Jonah -- Nifty trend alignment, USDINR/crude, and (this closes the
-last fundamentals.py gap) sector relative strength via NSE sector indices
--- all likely available through Kite's own instrument list the same way
-India VIX was, avoiding NSE/scraping fragility entirely for these three.
+**Scope decisions locked in with Jonah (Aug 31 2026)**:
+- **MVP = equities only.** Commodities (gold, crude, etc.) and other
+  global-market parameters are explicitly deferred to a later phase, not
+  part of this build. USDINR/crude, if built at all soon, would be as a
+  confluence INPUT for evaluating equity setups (e.g. crude price context
+  for an oil-refiner stock's setup) -- never as instruments to trade
+  themselves; that's a materially bigger undertaking (its own confluence
+  module, since none of the existing OI/delivery%/FII-DII data applies to
+  commodities) and stays out of scope until explicitly revisited.
+- **Indexes (NIFTY 50, BANK NIFTY) deferred too, same as commodities** --
+  Option A chosen over adding basic index support now. Important
+  technical note for when this gets picked up: the detection ENGINE
+  already works on index OHLCV as-is (zones/VCP/stage are pure price-
+  action, proven by the Nifty-trend-alignment confluence feature below,
+  which already runs stage.py on NIFTY 50's own price data) -- what's
+  still needed is: (1) fundamentals.py skipping the screener.in lookup
+  entirely for index symbols (no company financials exist), (2) the
+  OI-buildup confluence signal reading `index_fut` instead of `stock_fut`
+  positioning when the underlying is an index, (3) the delivery% signal
+  reporting "not applicable" for an index rather than a lookup that will
+  always come back empty. None of this is hard, but it's real work, not
+  a config flag -- explicitly scoped as a near-term follow-up alongside
+  commodities, not part of MVP.
+
+**Position Calculator: DONE (Aug 31 2026).** New dashboard page --
+entry/stop/target1/target2/lot-size/capital/max-risk% -> suggested lots
+and quantity, actual risk amount, R:R and potential P&L per target. Lot
+size auto-fetches from Kite's real F&O instrument list (confirmed real:
+HDFCBANK=650, RELIANCE=500, TCS=225) instead of being typed in blind. A
+"Send to Position Calculator" button on Symbol Detail prefills everything
+from the currently computed setup. Nothing typed here is persisted
+anywhere (no file, no DB) -- deliberate, since capital figures are
+personal and this repo is public. Building and testing this live (in a
+real browser, not just written blind) caught two real Streamlit bugs,
+both now fixed and documented in SYSTEM_BUILD_PROMPT.md Section 1 as a
+pattern to follow for any future cross-page dashboard navigation: (1) a
+widget's own session_state key can't be reassigned directly from code
+that runs after that widget is instantiated in the same run -- fixed via
+a "pending override, applied before the widget renders" pattern; (2) a
+prefilled value (the fetched lot size) was silently reverting to a bare
+default on the very next unrelated rerun because the widget had no
+stable `key`, meaning every calculation after the first keystroke
+elsewhere on the page was silently computed against the WRONG lot size --
+caught via a real math check (500,000 capital gave Lots=39 instead of the
+correct 0) before being trusted.
+
+**Immediate next step**: build the Kite-sourced regime filters -- Nifty
+trend alignment and (closes the last fundamentals.py gap) sector relative
+strength via NSE sector indices, both confirmed available through Kite's
+own instrument list the same way India VIX was. Sector strength gets a
+config.yaml on/off toggle exposed as a dashboard checkbox, per Jonah's
+request, since it's a softer/more debatable signal than the earnings-
+growth filter. USDINR/crude and commodities/indexes generally: deferred,
+see the scope decisions above.
 
 ## What this project is
 A personal trading analysis system for Jonah, combining supply/demand zone

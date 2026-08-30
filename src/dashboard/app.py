@@ -91,7 +91,7 @@ def render_scan_table(scan_df: pd.DataFrame):
         cols[4].markdown(conviction_badge(row["conviction"]), unsafe_allow_html=True)
         if cols[5].button("Inspect", key=f"inspect_{row['id']}"):
             st.session_state["selected_symbol"] = row["symbol"]
-            st.session_state["nav"] = "Symbol Detail"
+            st.session_state["_nav_override"] = "Symbol Detail"
             st.rerun()
 
 
@@ -209,8 +209,19 @@ def page_symbol_detail(cfg: dict):
             stop = base_low if direction == "bullish" else base_high
             st.markdown(f"**4. Stop-loss:** {stop:.2f} (opposite side of the base -- setup invalidated if closed beyond this)")
             risk = abs(setup.trigger_level - stop)
-            target = setup.trigger_level + 2 * risk if direction == "bullish" else setup.trigger_level - 2 * risk
-            st.markdown(f"**5. Target (2R):** {target:.2f} | Risk-reward: 1:2 (illustrative -- size to your own max-risk-per-trade rule)")
+            target1 = setup.trigger_level + 2 * risk if direction == "bullish" else setup.trigger_level - 2 * risk
+            target2 = setup.trigger_level + 3 * risk if direction == "bullish" else setup.trigger_level - 3 * risk
+            st.markdown(f"**5. Targets:** T1 (2R) = {target1:.2f}, T2 (3R) = {target2:.2f} | illustrative R-multiples -- size to your own max-risk-per-trade rule")
+            if st.button("Send to Position Calculator"):
+                st.session_state["calc_symbol"] = symbol
+                st.session_state["calc_direction"] = direction
+                st.session_state["calc_entry"] = float(setup.trigger_level)
+                st.session_state["calc_stop"] = float(stop)
+                st.session_state["calc_target1"] = float(target1)
+                st.session_state["calc_target2"] = float(target2)
+                st.session_state["calc_prefill_pending"] = True
+                st.session_state["_nav_override"] = "Position Calculator"
+                st.rerun()
             if confluence:
                 st.markdown(f"**6. Composite conviction:** {conviction_badge(confluence.conviction)} (weighted score {confluence.weighted_score})", unsafe_allow_html=True)
                 st.caption(confluence.notes)
@@ -290,22 +301,149 @@ def page_scan_history():
     render_scan_table(scan_df)
 
 
+def page_calculator(cfg: dict):
+    st.title("🧮 Position Calculator")
+    st.caption(
+        "Position-sizing planning tool only -- not investment advice, and nothing "
+        "you type here is saved anywhere (no file, no database, no persistence "
+        "across sessions). Notional value shown is illustrative (quantity x price), "
+        "NOT your broker's actual SPAN+exposure margin requirement -- always check "
+        "your broker platform before placing a trade."
+    )
+
+    # Any session_state write to a *_w key below MUST happen here, before the
+    # widget owning that key is instantiated further down -- same rule as
+    # the _nav_override fix: a key already bound to a widget instantiated
+    # in this run can't be reassigned directly (Streamlit raises
+    # StreamlitAPIException). This block handles both the one-time prefill
+    # from "Send to Position Calculator" (Symbol Detail) and the "Fetch
+    # from Kite" button's lot-size update, which triggers its own rerun.
+    if st.session_state.pop("calc_prefill_pending", False):
+        st.session_state["calc_symbol_w"] = st.session_state.pop("calc_symbol", "")
+        st.session_state["calc_direction_w"] = st.session_state.pop("calc_direction", "bullish")
+        st.session_state["calc_entry_w"] = float(st.session_state.pop("calc_entry", 0.0))
+        st.session_state["calc_stop_w"] = float(st.session_state.pop("calc_stop", 0.0))
+        st.session_state["calc_target1_w"] = float(st.session_state.pop("calc_target1", 0.0))
+        st.session_state["calc_target2_w"] = float(st.session_state.pop("calc_target2", 0.0))
+        symbol_for_lot = st.session_state.get("calc_symbol_w", "")
+        if symbol_for_lot:
+            try:
+                from data.kite_ohlcv import get_lot_size
+                fetched = get_lot_size(symbol_for_lot.upper())
+                if fetched:
+                    st.session_state["calc_lot_size_w"] = fetched
+                    st.session_state["_calc_lot_msg"] = ("success", f"Fetched real lot size for {symbol_for_lot.upper()} from Kite: {fetched}")
+                else:
+                    st.session_state["_calc_lot_msg"] = ("warning", f"Could not find a Kite F&O lot size for {symbol_for_lot.upper()} -- enter it manually.")
+            except Exception as e:
+                st.session_state["_calc_lot_msg"] = ("warning", f"Lot size lookup failed ({e}) -- enter it manually.")
+
+    if "_calc_lot_fetch_pending" in st.session_state:
+        st.session_state["calc_lot_size_w"] = st.session_state.pop("_calc_lot_fetch_pending")
+
+    lot_msg = st.session_state.pop("_calc_lot_msg", None)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Trade setup")
+        symbol = st.text_input("Symbol (optional, for lot-size lookup)", key="calc_symbol_w")
+        direction = st.radio("Direction", ["bullish", "bearish"], horizontal=True, key="calc_direction_w")
+        entry = st.number_input("Entry price", min_value=0.0, format="%.2f", key="calc_entry_w")
+        stop = st.number_input("Stop-loss price", min_value=0.0, format="%.2f", key="calc_stop_w")
+        target1 = st.number_input("Target 1", min_value=0.0, format="%.2f", key="calc_target1_w")
+        target2 = st.number_input("Target 2", min_value=0.0, format="%.2f", key="calc_target2_w")
+
+        lot_col1, lot_col2 = st.columns([2, 1])
+        lot_size = lot_col1.number_input("Lot size", min_value=1, step=1, key="calc_lot_size_w")
+        if lot_msg:
+            level, text = lot_msg
+            getattr(st, level)(text)
+        if lot_col2.button("Fetch from Kite", help="Look up the real stock-futures lot size for the symbol above"):
+            if not symbol:
+                st.warning("Enter a symbol first.")
+            else:
+                try:
+                    from data.kite_ohlcv import get_lot_size
+                    fetched = get_lot_size(symbol.upper())
+                    if fetched:
+                        st.session_state["_calc_lot_fetch_pending"] = fetched
+                        st.rerun()
+                    else:
+                        st.warning(f"No F&O lot size found for {symbol.upper()}.")
+                except Exception as e:
+                    st.warning(f"Lookup failed: {e}")
+
+    with col2:
+        st.subheader("Risk & capital")
+        capital = st.number_input("Capital available (Rs)", min_value=0.0, value=0.0, step=10000.0, format="%.2f")
+        risk_pct = st.number_input("Max risk per trade (%)", min_value=0.01, max_value=100.0, value=1.0, step=0.25)
+
+        risk_per_share = abs(entry - stop)
+        risk_per_lot = risk_per_share * lot_size
+
+        st.divider()
+        st.subheader("Suggested position size")
+        if risk_per_lot <= 0 or capital <= 0:
+            st.info("Enter entry, stop, lot size, and capital to compute a suggested position size.")
+            max_lots = 0
+            suggested_qty = 0
+            actual_risk_amount = 0.0
+        else:
+            max_risk_amount = capital * risk_pct / 100
+            max_lots = int(max_risk_amount // risk_per_lot)
+            suggested_qty = max_lots * lot_size
+            actual_risk_amount = max_lots * risk_per_lot
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Lots", max_lots)
+            m2.metric("Quantity", suggested_qty)
+            m3.metric("Actual risk (Rs)", f"{actual_risk_amount:,.0f}")
+
+            notional = suggested_qty * entry
+            st.caption(f"Illustrative notional value: Rs{notional:,.0f} (quantity x entry price -- not your real margin requirement)")
+
+    st.divider()
+    st.subheader("Targets")
+    if risk_per_share <= 0:
+        st.info("Enter a valid entry and stop-loss (different prices) to compute risk-reward.")
+    else:
+        t1_col, t2_col = st.columns(2)
+        for col, target, label in [(t1_col, target1, "Target 1"), (t2_col, target2, "Target 2")]:
+            with col:
+                if target <= 0:
+                    st.caption(f"{label}: not set")
+                    continue
+                rr = abs(target - entry) / risk_per_share
+                pnl = suggested_qty * abs(target - entry)
+                st.metric(f"{label} R:R", f"1:{rr:.1f}")
+                st.caption(f"Potential P&L at {label} (Rs{target:.2f}, full sized position): Rs{pnl:,.0f}")
+
+
 def main():
     cfg = load_config()
 
     if "nav" not in st.session_state:
         st.session_state["nav"] = "Daily Scan"
+    if "_nav_override" in st.session_state:
+        # Cross-page nav (e.g. an "Inspect"/"Send to Calculator" button) must
+        # land here BEFORE the radio widget below is instantiated -- once a
+        # widget owns a session_state key for a run, that key can't be
+        # reassigned directly from within the same run.
+        st.session_state["nav"] = st.session_state.pop("_nav_override")
 
     st.sidebar.title("S&D + VCP Studio")
     st.sidebar.caption("India-first supply/demand + VCP swing research tool. Analytical output only -- never a buy/sell instruction.")
     nav = st.sidebar.radio(
         "Navigate",
-        ["Daily Scan", "Symbol Detail", "Watchlist Management", "Scan History"],
+        ["Daily Scan", "Symbol Detail", "Position Calculator", "Watchlist Management", "Scan History"],
         key="nav",
     )
 
     if nav == "Daily Scan":
         page_daily_scan(cfg)
+    elif nav == "Position Calculator":
+        page_calculator(cfg)
     elif nav == "Symbol Detail":
         page_symbol_detail(cfg)
     elif nav == "Watchlist Management":
