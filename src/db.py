@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     profit_yoy_growth_pct REAL,
     earnings_trend TEXT,
     rs_rating INTEGER,
+    sales_trend TEXT,
+    margin_trend TEXT,
+    earnings_quality_flag TEXT,
+    earnings_quality_detail TEXT,
     fetched_at TEXT
 );
 """
@@ -164,6 +168,22 @@ def _migrate_fundamentals_add_rs_rating(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_fundamentals_add_sales_margin_quality(conn: sqlite3.Connection) -> None:
+    """fundamentals gained sales_trend/margin_trend/earnings_quality_flag/
+    earnings_quality_detail columns (Step 15.4). ALTER TABLE ADD COLUMN,
+    same pattern as the rs_rating migration above -- real cached data."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(fundamentals)")]
+    if not cols:
+        return
+    for col, coltype in (
+        ("sales_trend", "TEXT"), ("margin_trend", "TEXT"),
+        ("earnings_quality_flag", "TEXT"), ("earnings_quality_detail", "TEXT"),
+    ):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE fundamentals ADD COLUMN {col} {coltype}")
+    conn.commit()
+
+
 def init_db() -> None:
     """Create all tables if they don't already exist. Safe to run repeatedly."""
     conn = get_connection()
@@ -171,6 +191,7 @@ def init_db() -> None:
         _migrate_scan_results_add_direction(conn)
         _migrate_zones_add_precision_columns(conn)
         _migrate_fundamentals_add_rs_rating(conn)
+        _migrate_fundamentals_add_sales_margin_quality(conn)
         conn.executescript(SCHEMA)
         conn.commit()
         print(f"Database ready at: {DB_PATH}")
@@ -391,7 +412,8 @@ def get_india_vix(start_date: str = None, end_date: str = None) -> pd.DataFrame:
 def upsert_fundamentals(record: dict) -> None:
     """record keys: symbol, sector, industry, quarters_json,
     eps_yoy_growth_pct, eps_yoy_growth_pct_prior, profit_yoy_growth_pct,
-    earnings_trend. One row per symbol -- overwritten on each re-scrape.
+    earnings_trend, sales_trend, margin_trend, earnings_quality_flag,
+    earnings_quality_detail. One row per symbol -- overwritten on each re-scrape.
 
     Uses INSERT ... ON CONFLICT DO UPDATE naming only ITS OWN columns
     (not a blanket INSERT OR REPLACE) so it never touches rs_rating --
@@ -405,8 +427,10 @@ def upsert_fundamentals(record: dict) -> None:
         conn.execute(
             """INSERT INTO fundamentals
                (symbol, sector, industry, quarters_json, eps_yoy_growth_pct,
-                eps_yoy_growth_pct_prior, profit_yoy_growth_pct, earnings_trend, fetched_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                eps_yoy_growth_pct_prior, profit_yoy_growth_pct, earnings_trend,
+                sales_trend, margin_trend, earnings_quality_flag, earnings_quality_detail,
+                fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(symbol) DO UPDATE SET
                  sector=excluded.sector, industry=excluded.industry,
                  quarters_json=excluded.quarters_json,
@@ -414,12 +438,18 @@ def upsert_fundamentals(record: dict) -> None:
                  eps_yoy_growth_pct_prior=excluded.eps_yoy_growth_pct_prior,
                  profit_yoy_growth_pct=excluded.profit_yoy_growth_pct,
                  earnings_trend=excluded.earnings_trend,
+                 sales_trend=excluded.sales_trend,
+                 margin_trend=excluded.margin_trend,
+                 earnings_quality_flag=excluded.earnings_quality_flag,
+                 earnings_quality_detail=excluded.earnings_quality_detail,
                  fetched_at=excluded.fetched_at""",
             (
                 record["symbol"], record.get("sector"), record.get("industry"),
                 record.get("quarters_json"), record.get("eps_yoy_growth_pct"),
                 record.get("eps_yoy_growth_pct_prior"), record.get("profit_yoy_growth_pct"),
-                record.get("earnings_trend"), _now(),
+                record.get("earnings_trend"), record.get("sales_trend"),
+                record.get("margin_trend"), record.get("earnings_quality_flag"),
+                record.get("earnings_quality_detail"), _now(),
             ),
         )
         conn.commit()

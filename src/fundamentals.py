@@ -9,10 +9,13 @@ Data source: screener.in via data/screener_scraper.py. Cached locally
 sector classification don't change day to day, so there's no reason to
 hit screener.in on every daily scan run.
 
-Scope note: only the earnings-growth-trend half of Section 5 is
-implemented. "Sector relative strength" (is the stock's sector currently
-outperforming the broader index) needs sector-index price history, a
-data source not wired in yet -- flagged, not silently assumed.
+Scope note: "Sector relative strength" (is the stock's sector currently
+outperforming the broader index) is handled separately in confluence.py
+(Step 13), not here. Step 15.4 added sales_trend/margin_trend/
+earnings_quality_flag as ADDITIVE, flag-only signals (surfaced via
+db.get_fundamentals()'s raw record, shown on the dashboard) -- only the
+original declining-EPS rule below is a hard eligibility exclude; the new
+15.4 signals never affect `eligible`, per Jonah's explicit severity call.
 """
 
 from dataclasses import dataclass
@@ -63,6 +66,7 @@ def apply_fundamental_filter(symbol: str, force_refresh: bool = False) -> Fundam
     cfg = load_config().get("fundamentals", {})
     max_age_days = cfg.get("cache_max_age_days", 7)
     min_quarters = cfg.get("min_quarters_required", 6)
+    eq_multiplier = cfg.get("earnings_quality_multiplier", 2.5)
 
     stale_note = ""
     cached = db.get_fundamentals(symbol)
@@ -70,7 +74,10 @@ def apply_fundamental_filter(symbol: str, force_refresh: bool = False) -> Fundam
         record = cached
     else:
         try:
-            record = fetch_fundamentals(symbol, min_quarters_required=min_quarters)
+            record = fetch_fundamentals(
+                symbol, min_quarters_required=min_quarters,
+                earnings_quality_multiplier=eq_multiplier,
+            )
             db.upsert_fundamentals(record)
         except ScraperError as e:
             if not cached:

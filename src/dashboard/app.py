@@ -301,14 +301,43 @@ def page_symbol_detail(cfg: dict):
         fund_row = db.get_fundamentals(symbol)
         st.markdown("**Fundamentals (Section 5)**")
         if fund_row:
+            from style import badge
             trend = fund_row.get("earnings_trend", "unknown")
             trend_color = {"accelerating": "#22c55e", "decelerating": "#f59e0b", "declining": "#ef4444"}.get(trend, "#94a3b8")
             st.markdown(f"Sector: {fund_row.get('sector') or 'unknown'}")
             st.markdown(f"Industry: {fund_row.get('industry') or 'unknown'}")
-            from style import badge
-            st.markdown(badge(trend, trend_color), unsafe_allow_html=True)
+            st.markdown(badge(f"earnings {trend}", trend_color), unsafe_allow_html=True)
             if fund_row.get("eps_yoy_growth_pct") is not None:
                 st.caption(f"EPS YoY: {fund_row['eps_yoy_growth_pct']}% (prior quarter: {fund_row.get('eps_yoy_growth_pct_prior')}%)")
+
+            # Step 15.4: sales/margin acceleration + earnings-quality --
+            # additive, flag-only info (never excludes a symbol), shown as
+            # a warning badge only when it actually conflicts/trips, per
+            # the severity decision in the Step 15 handoff.
+            sales_trend = fund_row.get("sales_trend")
+            margin_trend = fund_row.get("margin_trend")
+            eq_flag = fund_row.get("earnings_quality_flag")
+            eq_detail = fund_row.get("earnings_quality_detail")
+
+            badge_row = []
+            if sales_trend and sales_trend not in ("insufficient_data",):
+                sales_color = {"accelerating": "#22c55e", "decelerating": "#f59e0b", "declining": "#ef4444"}.get(sales_trend, "#94a3b8")
+                badge_row.append(badge(f"sales {sales_trend}", sales_color))
+            if margin_trend and margin_trend not in ("insufficient_data", "not_applicable"):
+                margin_color = {"expanding": "#22c55e", "stable": "#94a3b8", "contracting": "#ef4444"}.get(margin_trend, "#94a3b8")
+                badge_row.append(badge(f"margin {margin_trend}", margin_color))
+            if badge_row:
+                st.markdown(" ".join(badge_row), unsafe_allow_html=True)
+
+            conflicting = sales_trend in ("declining",) and trend in ("accelerating", "decelerating")
+            if eq_flag == "flagged" or conflicting:
+                warn_bits = []
+                if eq_flag == "flagged":
+                    warn_bits.append(f"earnings-quality: {eq_detail}")
+                if conflicting:
+                    warn_bits.append(f"sales trend ({sales_trend}) conflicts with earnings trend ({trend})")
+                st.markdown(badge("⚠ quality warning", "#ef4444"), unsafe_allow_html=True)
+                st.caption(" -- ".join(warn_bits))
         else:
             st.caption("Not yet scraped -- runs automatically on the next scan.")
 

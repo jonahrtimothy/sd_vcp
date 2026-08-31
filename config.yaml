@@ -68,6 +68,14 @@ fundamentals:
   # on/off switch for the sector-relative-strength confluence input --
   # exposed as a checkbox on the dashboard (Excluded Symbols page)
   sector_strength_enabled: true
+  # Step 15.4 (Sep 1 2026): earnings-quality red flag -- Inventory/Trade
+  # Receivables (reconstructed from screener.in's annual Debtor Days /
+  # Inventory Days ratios, since the raw balance-sheet line items aren't
+  # reliably exposed in static HTML -- see screener_scraper.py's
+  # _compute_earnings_quality_flag docstring) growing this many times
+  # faster than Sales YoY trips the flag. Flag/warning severity only, per
+  # Jonah's explicit call -- never excludes a symbol from the scan.
+  earnings_quality_multiplier: 2.5
 
 # Relative Strength (RS) Rating -- Step 15.3 (Aug 31 2026 addition,
 # Section 7/2 item 8). Approximates IBD's RS Rating: a weighted blend of
