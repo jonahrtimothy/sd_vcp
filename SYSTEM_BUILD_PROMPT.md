@@ -229,6 +229,36 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   below) -- parsed independently of the quarterly-growth table so a
   row-naming quirk in one doesn't lose the other (real bug found and
   fixed on HDFCBANK, a bank -- see Step 13 detail).
+  **Step 15.4 (new)**: `sales_trend` reuses the exact same YoY-acceleration
+  classification as `earnings_trend` (shared core factored into
+  `_yoy_growth_trend()`), applied to the Sales row instead of EPS.
+  `margin_trend` reads the same Quarterly Results table's OPM % row
+  (level comparison vs. 1 year earlier -- expanding/contracting/stable,
+  not a growth-rate-of-a-growth-rate) when present; banks report
+  "Financing Margin %" instead, a different metric, so OPM % is captured
+  opportunistically, never required -- `margin_trend` correctly reports
+  `not_applicable` for HDFCBANK. Earnings-quality red flag
+  (`earnings_quality_flag`/`_detail`) compares annual Debtor Days /
+  Inventory Days growth (Ratios section) to Sales growth, multiplier-
+  gated via `config.yaml`'s `fundamentals.earnings_quality_multiplier`
+  (2.5). Real-data course correction: the original plan (raw Balance
+  Sheet Inventory/Trade Receivables line items) doesn't work --
+  screener.in's static HTML rolls those into an expandable "Other Assets
+  +" row loaded via JS, confirmed absent even for RELIANCE, a case
+  expected to work; substituted the Ratios section's Debtor Days /
+  Inventory Days instead (Receivables ~= Debtor Days * Sales / 365
+  reconstructs the same YoY comparison from data that actually is
+  present in the static HTML), which also correctly reproduces the bank
+  exception (confirmed real: HDFCBANK's Ratios section has no
+  Debtor/Inventory Days at all, only ROE % -> `not_applicable`). Flag/
+  warning severity only -- never affects `fundamentals.py`'s eligibility
+  gate, confirmed by re-running the filter after this change and seeing
+  RELIANCE still correctly EXCLUDED for the same original reason
+  (declining EPS), unaffected by the new signals. Validated against the
+  same 4-symbol pattern as the original scraper: RELIANCE (flagged --
+  receivables +37% YoY vs sales +10% YoY), TCS (flagged -- receivables
+  +16% YoY vs sales +5% YoY), HDFCBANK (not_applicable), PAGEIND
+  (insufficient_data, consistent with its known unparseable-cells case).
 - `fundamentals.py` (NEW) — Section 5's quality filter, applied BEFORE the
   technical scan per the strategy prompt's intended order. Caches
   screener_scraper.py's output in the new `fundamentals` DB table and only
@@ -297,6 +327,12 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   INSERT list -- switched to `INSERT ... ON CONFLICT DO UPDATE` on an
   explicit column list instead, verified via a real round-trip test that
   `rs_rating` now survives a re-scrape.
+  **Step 15.4 (new)**: `fundamentals` gained `sales_trend`/`margin_trend`/
+  `earnings_quality_flag`/`earnings_quality_detail` (same ALTER TABLE
+  migration pattern); `upsert_fundamentals()`'s explicit column list
+  extended to include them, still excluding `rs_rating`. Verified real:
+  `rs_rating` survives an upsert carrying the new 15.4 fields for
+  RELIANCE/TCS/HDFCBANK.
 
 **Config/security**:
 - `.env` (gitignored) — holds `KITE_API_KEY`, `KITE_API_SECRET`
@@ -631,7 +667,7 @@ data:
 
   **Real, full end-to-end validation (Sep 1 2026)**: ran the actual full universe live, not simulated. `get_fno_universe()` returned 210 real stocks (6 index-future underlyings like NIFTY/BANKNIFTY correctly filtered out via the cash-equity-listing discriminator). `refresh_data.py`: 210 symbols' OHLCV backfilled in **211 seconds**, zero failures. `run_scan.py`: 210 symbols scanned (including full screener.in fundamentals scrapes for ~170 symbols never seen before) in **382 seconds**, zero failures. **Total end-to-end: ~10 minutes** -- comfortably fits the 6:45 PM Task Scheduler slot with a large margin before any reasonable time Jonah would check results; not a concern, but measured and reported as the doc required rather than assumed. DB counts scaled as expected: `fundamentals` 39->210 (full universe), latest `scan_date` went from ~58 scan_results rows (old 40-watchlist) to **278** (73 High / 111 Medium / 94 Low). Confirmed visually in a real browser: genuinely new symbols never seen in this project before (PATANJALI, TATACONSUM, VBL) showing up as real High-conviction setups.
 - **15.3 — 8-point Trend Template completion + new RS Rating module** ✅ DONE, see Section 1 above (`stage.py`'s `classify_trend_template()` and new `rs_rating.py`).
-- 15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags — not started.
+- **15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags** ✅ DONE, see Section 1 above (`screener_scraper.py`, `db.py`, `fundamentals.py`).
 - 15.5 — VCP base staging + (Time)(Depth)(Ticks) notation — not started.
 - 15.6 — Confluence: wire in RS Rating — not started (depends on 15.3).
 - 15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan — not started (depends on 15.0, done).
