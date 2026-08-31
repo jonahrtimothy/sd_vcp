@@ -26,10 +26,10 @@ import db
 from config import load_config, update_watchlist
 from confluence import compute_confluence
 from stage import classify_stage
-from vcp import detect_vcp
+from vcp import detect_vcp, check_trigger
 from zones import detect_zones
 from charts import build_price_chart
-from style import conviction_badge, direction_badge, stage_badge
+from style import conviction_badge, direction_badge, stage_badge, trigger_badge
 
 
 def _parse_any_date(raw: str):
@@ -78,18 +78,19 @@ def render_scan_table(scan_df: pd.DataFrame):
     scan_df["_sort"] = scan_df["conviction"].map(_conviction_sort_key)
     scan_df = scan_df.sort_values(["_sort", "confluence_score"], ascending=[True, False])
 
-    header_cols = st.columns([1.4, 1.1, 1.1, 1.1, 1.1, 1])
-    for c, label in zip(header_cols, ["Symbol", "Direction", "Stage", "Score", "Conviction", ""]):
+    header_cols = st.columns([1.3, 1, 1, 1.2, 1, 1.1, 1])
+    for c, label in zip(header_cols, ["Symbol", "Direction", "Stage", "Trigger", "Score", "Conviction", ""]):
         c.markdown(f"**{label}**")
 
     for _, row in scan_df.iterrows():
-        cols = st.columns([1.4, 1.1, 1.1, 1.1, 1.1, 1])
+        cols = st.columns([1.3, 1, 1, 1.2, 1, 1.1, 1])
         cols[0].markdown(f"**{row['symbol']}**")
         cols[1].markdown(direction_badge(row["direction"]), unsafe_allow_html=True)
         cols[2].markdown(stage_badge(row["stage"]), unsafe_allow_html=True)
-        cols[3].markdown(f"{row['confluence_score']:.0f}")
-        cols[4].markdown(conviction_badge(row["conviction"]), unsafe_allow_html=True)
-        if cols[5].button("Inspect", key=f"inspect_{row['id']}"):
+        cols[3].markdown(trigger_badge(row.get("trigger_status", "forming")), unsafe_allow_html=True)
+        cols[4].markdown(f"{row['confluence_score']:.0f}")
+        cols[5].markdown(conviction_badge(row["conviction"]), unsafe_allow_html=True)
+        if cols[6].button("Inspect", key=f"inspect_{row['id']}"):
             st.session_state["selected_symbol"] = row["symbol"]
             st.session_state["_nav_override"] = "Symbol Detail"
             st.rerun()
@@ -186,6 +187,8 @@ def page_symbol_detail(cfg: dict):
 
     direction = st.radio("Direction", ["bullish", "bearish"], horizontal=True)
     setup = detect_vcp(df, direction=direction, contraction_ratio_threshold=det["vcp_contraction_ratio_threshold"])
+    if setup is not None:
+        setup = check_trigger(df, setup, volume_multiple=det["vcp_volume_multiple_trigger"])
 
     fig = build_price_chart(df, zones, setup, title=f"{symbol} -- {df['date'].max()}")
     st.plotly_chart(fig, use_container_width=True)
@@ -200,10 +203,30 @@ def page_symbol_detail(cfg: dict):
             st.info("Stage classification unavailable (insufficient history) -- confluence verdict withheld.")
         else:
             confluence = compute_confluence(stage_result, zones, setup, symbol=symbol, as_of_date=df["date"].max())
+
+            if setup.status == "failed":
+                st.error(
+                    "This VCP pattern has ALREADY FAILED -- price closed back inside the base (or "
+                    "the pattern widened) since it formed. Per the strategy's own invalidation rule, "
+                    "this is 'exit or stand aside,' not a live opportunity -- numbers below are shown "
+                    "for reference only, not as something to act on."
+                )
+            elif setup.status == "triggered":
+                st.success(
+                    "This setup has ALREADY TRIGGERED -- price has closed beyond the entry level on "
+                    "volume expansion, as of the data currently loaded. This describes what already "
+                    "happened, not a live signal to act on right now."
+                )
+
             st.markdown(f"**1. Instrument / Stage:** {symbol} | {stage_badge(stage_result.stage)}", unsafe_allow_html=True)
             st.caption(stage_result.reason)
             st.markdown(f"**2. VCP:** {len(setup.contractions)} contractions, ratio_ok={setup.contraction_ratio_ok}, vol_decay_ok={setup.volume_decay_ok}, quality_score={setup.quality_score:.0f}")
-            st.markdown(f"**3. Entry trigger:** {'Close above' if direction == 'bullish' else 'Close below'} **{setup.trigger_level:.2f}** on volume expansion (>= config threshold)")
+            st.markdown(
+                f"**3. Entry trigger:** {'Close above' if direction == 'bullish' else 'Close below'} "
+                f"**{setup.trigger_level:.2f}** on volume expansion (>= config threshold) "
+                f"{trigger_badge(setup.status)}",
+                unsafe_allow_html=True,
+            )
             base_low = df["low"].iloc[setup.base_start_idx:setup.base_end_idx + 1].min()
             base_high = df["high"].iloc[setup.base_start_idx:setup.base_end_idx + 1].max()
             stop = base_low if direction == "bullish" else base_high

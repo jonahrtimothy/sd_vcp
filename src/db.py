@@ -469,15 +469,20 @@ def upsert_scan_result(
 def get_scan_results(scan_date: str = None, symbol: str = None) -> pd.DataFrame:
     conn = get_connection()
     try:
-        query = "SELECT * FROM scan_results WHERE 1=1"
+        query = """
+            SELECT sr.*, vs.status AS trigger_status
+            FROM scan_results sr
+            LEFT JOIN vcp_setups vs ON sr.vcp_id = vs.id
+            WHERE 1=1
+        """
         params = []
         if scan_date:
-            query += " AND scan_date = ?"
+            query += " AND sr.scan_date = ?"
             params.append(scan_date)
         if symbol:
-            query += " AND symbol = ?"
+            query += " AND sr.symbol = ?"
             params.append(symbol)
-        query += " ORDER BY confluence_score DESC"
+        query += " ORDER BY sr.confluence_score DESC"
         return pd.read_sql_query(query, conn, params=params)
     finally:
         conn.close()

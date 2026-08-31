@@ -31,7 +31,7 @@ from config import load_config
 from confluence import compute_confluence
 from fundamentals import apply_fundamental_filter
 from stage import classify_stage
-from vcp import detect_vcp
+from vcp import detect_vcp, check_trigger
 from zones import detect_zones
 
 logging.basicConfig(
@@ -123,6 +123,15 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
     if setup is None:
         return
 
+    setup = check_trigger(df, setup, volume_multiple=det["vcp_volume_multiple_trigger"])
+    if setup.status == "failed":
+        # Strategy prompt Section 4: "the setup is invalidated -- exit or
+        # stand aside." A failed pattern is no longer a valid opportunity,
+        # so it's deliberately not persisted as one -- surfacing it as an
+        # actionable scan_result would contradict the strategy's own rule.
+        log.info(f"{symbol} [{direction}]: VCP pattern failed/invalidated -- not persisted as an opportunity")
+        return
+
     stage_result = classify_stage(df)
     confluence = compute_confluence(stage_result, zones, setup, symbol=symbol, as_of_date=scan_date)
     if confluence is None:
@@ -146,7 +155,7 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
         conviction=confluence.conviction, notes=all_notes,
         zone_id=backing_zone_id, vcp_id=vcp_id,
     )
-    log.info(f"{symbol} [{direction}]: {confluence.conviction} (score={confluence.weighted_score}) -- {stage_result.stage}")
+    log.info(f"{symbol} [{direction}]: {confluence.conviction} (score={confluence.weighted_score}) -- {stage_result.stage} -- trigger:{setup.status}")
 
 
 def run_scan(cfg: dict) -> None:

@@ -21,6 +21,12 @@ STAGE_COLORS = {
     "insufficient_data": "#64748b",
 }
 
+TRIGGER_COLORS = {
+    "triggered": "#22c55e",   # green -- price has actually confirmed (close + volume)
+    "forming": "#94a3b8",     # slate -- base still building, not yet confirmed
+    "failed": "#ef4444",      # red -- pattern invalidated, exit or stand aside
+}
+
 ZONE_COLORS = {
     "demand": "rgba(34, 197, 94, 0.18)",
     "supply": "rgba(239, 68, 68, 0.18)",
@@ -50,3 +56,8 @@ def direction_badge(direction: str) -> str:
 
 def stage_badge(stage: str) -> str:
     return badge(stage, STAGE_COLORS.get(stage, "#94a3b8"))
+
+
+def trigger_badge(status: str) -> str:
+    label = {"triggered": "TRIGGERED", "failed": "FAILED"}.get(status, "forming")
+    return badge(label, TRIGGER_COLORS.get(status, "#94a3b8"))
