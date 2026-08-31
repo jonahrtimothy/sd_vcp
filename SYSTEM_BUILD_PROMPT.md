@@ -69,6 +69,25 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   structure and SMA200 slope. Requires >=210 bars of history. Validated
   on synthetic uptrend/downtrend/flat cases and real RELIANCE data
   (correctly classified Stage 4 given real falling MA structure).
+  **Step 15.3 (new)**: `classify_trend_template()` completes Minervini's
+  full 8-point Trend Template (items 6-8: >=25% above the 52-week low,
+  within 25% of the 52-week high, RS Rating >=70), surfaced ALONGSIDE
+  `classify_stage()` rather than folded into it -- a stock can be Stage 2
+  by MA structure alone yet still fail the full template (Minervini's own
+  "broken leader" caution). All 8 checks are individually exposed on
+  `TrendTemplateResult` so a failure is legible, not collapsed into one
+  boolean. Requires >=252 bars (a full trading year); reports
+  `insufficient_data` honestly otherwise rather than guessing.
+- `rs_rating.py` (NEW, Step 15.3) — approximates IBD's RS Rating: a
+  weighted blend of trailing quarterly returns (`config.yaml`'s
+  `rs_rating.quarter_weights`, default 0.4/0.2/0.2/0.2, heaviest on the
+  most recent ~63-day quarter), percentile-ranked 1-99 against the whole
+  scanned universe for that scan run. Explicitly documented as NOT the
+  real published IBD metric. `scanner.py`'s `run_scan()` computes it once
+  per scan across all symbols with enough history and persists via
+  `db.update_rs_ratings()` before the per-symbol confluence loop.
+  Validated on the live 210-stock F&O universe: 210/210 computed, rating
+  distribution min=1/max=99/median=50 (a sane percentile spread).
 - `confluence.py` — combines Stage + Zones + VCP into one Low/Medium/High
   conviction verdict. Stage is a HARD GATE/multiplier (not equal-weighted):
   a conflicting Stage caps conviction at Low regardless of VCP score —
@@ -269,6 +288,15 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   (a symbol can have both a bullish and bearish scan_result row); a
   one-time migration drops and recreates that table if the column is
   missing (safe -- it's empty in any DB from before this column existed).
+  **Step 15.0/15.3 (new)**: `zones` gained `distal_price`/`proximal_price`/
+  `broken` columns (ALTER TABLE migration, preserved 244 real existing
+  rows); `fundamentals` gained `rs_rating` (same migration pattern). New
+  `update_rs_ratings()`. Real bug found and fixed: `upsert_fundamentals()`
+  was `INSERT OR REPLACE`, which silently nulled `rs_rating` on every
+  weekly earnings re-scrape since that column isn't in the function's own
+  INSERT list -- switched to `INSERT ... ON CONFLICT DO UPDATE` on an
+  explicit column list instead, verified via a real round-trip test that
+  `rs_rating` now survives a re-scrape.
 
 **Config/security**:
 - `.env` (gitignored) — holds `KITE_API_KEY`, `KITE_API_SECRET`
@@ -602,7 +630,7 @@ data:
 - **15.2 — Full NSE F&O universe** ✅ DONE. `kite_ohlcv.get_fno_universe()` (see Section 1 above) replaces the 40-name watchlist; `scanner.get_scan_symbols()` computes `get_fno_universe() minus config.yaml's watchlist` (the recommended-default exclude-list repurposing from the handoff doc, applied and logged here rather than silently assumed) and caches the universe list to `data/fno_universe_cache.json` so `run_scan()` doesn't need a live Kite session just to enumerate symbols -- only `refresh_all_data()` (which already needs Kite per-symbol) re-fetches it live. Dashboard: "Watchlist Management" renamed "Excluded Symbols" with flipped Add/Remove semantics (Include -> Exclude); Daily Scan's KPI row now shows "Scanned universe" instead of "Watchlist size"; Symbol Detail's symbol selector now just lists whatever has OHLCV data, since there's no more hand-picked list to union in. `config.yaml`'s `watchlist:` cleared to `[]` on this transition (keeping the old 40-name INCLUDE list would have flipped to EXCLUDING exactly those stocks). Real bug found and fixed: `config.update_watchlist()`'s regex didn't match the new inline `watchlist: []` form, and would have written a bare `watchlist:\n` for an empty list -- which YAML parses as `null`, not `[]`, crashing anything that iterates `cfg["watchlist"]`. Progress logging (`[N/total] symbol: ...`, periodic elapsed-time lines) added to both `refresh_all_data()` and `run_scan()` per the doc's requirement.
 
   **Real, full end-to-end validation (Sep 1 2026)**: ran the actual full universe live, not simulated. `get_fno_universe()` returned 210 real stocks (6 index-future underlyings like NIFTY/BANKNIFTY correctly filtered out via the cash-equity-listing discriminator). `refresh_data.py`: 210 symbols' OHLCV backfilled in **211 seconds**, zero failures. `run_scan.py`: 210 symbols scanned (including full screener.in fundamentals scrapes for ~170 symbols never seen before) in **382 seconds**, zero failures. **Total end-to-end: ~10 minutes** -- comfortably fits the 6:45 PM Task Scheduler slot with a large margin before any reasonable time Jonah would check results; not a concern, but measured and reported as the doc required rather than assumed. DB counts scaled as expected: `fundamentals` 39->210 (full universe), latest `scan_date` went from ~58 scan_results rows (old 40-watchlist) to **278** (73 High / 111 Medium / 94 Low). Confirmed visually in a real browser: genuinely new symbols never seen in this project before (PATANJALI, TATACONSUM, VBL) showing up as real High-conviction setups.
-- 15.3 — 8-point Trend Template completion + new RS Rating module — not started.
+- **15.3 — 8-point Trend Template completion + new RS Rating module** ✅ DONE, see Section 1 above (`stage.py`'s `classify_trend_template()` and new `rs_rating.py`).
 - 15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags — not started.
 - 15.5 — VCP base staging + (Time)(Depth)(Ticks) notation — not started.
 - 15.6 — Confluence: wire in RS Rating — not started (depends on 15.3).
