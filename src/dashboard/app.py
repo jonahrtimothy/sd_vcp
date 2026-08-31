@@ -27,7 +27,7 @@ from config import load_config, update_watchlist
 from confluence import compute_confluence
 from stage import classify_stage
 from vcp import detect_vcp, check_trigger
-from zones import detect_zones
+from zones import detect_zones, zone_from_vcp_contraction
 from charts import build_price_chart
 from style import conviction_badge, direction_badge, stage_badge, trigger_badge
 
@@ -187,10 +187,16 @@ def page_symbol_detail(cfg: dict):
 
     direction = st.radio("Direction", ["bullish", "bearish"], horizontal=True)
     setup = detect_vcp(df, direction=direction, contraction_ratio_threshold=det["vcp_contraction_ratio_threshold"])
+    vcp_zone = None
     if setup is not None:
         setup = check_trigger(df, setup, volume_multiple=det["vcp_volume_multiple_trigger"])
+        # Step 15.0: the zone backing the active setup is anchored to VCP's
+        # own final contraction, not independently detected -- stop-loss
+        # below reads its distal_price so it can never drift from the chart.
+        vcp_zone = zone_from_vcp_contraction(df, direction, setup)
+    display_zones = ([vcp_zone] + zones) if vcp_zone else zones
 
-    fig = build_price_chart(df, zones, setup, title=f"{symbol} -- {df['date'].max()}")
+    fig = build_price_chart(df, display_zones, setup, title=f"{symbol} -- {df['date'].max()}")
     st.plotly_chart(fig, use_container_width=True)
 
     col_left, col_right = st.columns([1.3, 1])
@@ -202,7 +208,7 @@ def page_symbol_detail(cfg: dict):
         elif stage_result is None:
             st.info("Stage classification unavailable (insufficient history) -- confluence verdict withheld.")
         else:
-            confluence = compute_confluence(stage_result, zones, setup, symbol=symbol, as_of_date=df["date"].max())
+            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max())
 
             if setup.status == "failed":
                 st.error(
@@ -227,10 +233,8 @@ def page_symbol_detail(cfg: dict):
                 f"{trigger_badge(setup.status)}",
                 unsafe_allow_html=True,
             )
-            base_low = df["low"].iloc[setup.base_start_idx:setup.base_end_idx + 1].min()
-            base_high = df["high"].iloc[setup.base_start_idx:setup.base_end_idx + 1].max()
-            stop = base_low if direction == "bullish" else base_high
-            st.markdown(f"**4. Stop-loss:** {stop:.2f} (opposite side of the base -- setup invalidated if closed beyond this)")
+            stop = vcp_zone.distal_price
+            st.markdown(f"**4. Stop-loss:** {stop:.2f} (the VCP-anchored zone's distal line -- final contraction's extreme wick; setup invalidated if closed beyond this)")
             risk = abs(setup.trigger_level - stop)
             target1 = setup.trigger_level + 2 * risk if direction == "bullish" else setup.trigger_level - 2 * risk
             target2 = setup.trigger_level + 3 * risk if direction == "bullish" else setup.trigger_level - 3 * risk
@@ -257,7 +261,7 @@ def page_symbol_detail(cfg: dict):
     with col_right:
         st.subheader("Confluence data")
         if setup is not None and stage_result is not None:
-            confluence = compute_confluence(stage_result, zones, setup, symbol=symbol, as_of_date=df["date"].max())
+            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max())
             if confluence:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("FII/DII", f"{confluence.fii_dii_bonus:+.0f}")

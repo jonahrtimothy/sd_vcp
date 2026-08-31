@@ -32,7 +32,7 @@ from confluence import compute_confluence
 from fundamentals import apply_fundamental_filter
 from stage import classify_stage
 from vcp import detect_vcp, check_trigger
-from zones import detect_zones
+from zones import detect_zones, zone_from_vcp_contraction
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,17 +132,24 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
         log.info(f"{symbol} [{direction}]: VCP pattern failed/invalidated -- not persisted as an opportunity")
         return
 
+    # Step 15.0: the zone backing THIS active setup is anchored to the VCP's
+    # own final contraction (not independently detected) so the stop-loss
+    # and the zone's distal line can never drift apart. Put it first so it's
+    # preferred as the backing zone below over any broader/historical zone.
+    vcp_zone = zone_from_vcp_contraction(df, direction, setup)
+    all_zones = [vcp_zone] + zones
+
     stage_result = classify_stage(df)
-    confluence = compute_confluence(stage_result, zones, setup, symbol=symbol, as_of_date=scan_date)
+    confluence = compute_confluence(stage_result, all_zones, setup, symbol=symbol, as_of_date=scan_date)
     if confluence is None:
         return
 
-    zone_ids = db.upsert_zones(symbol, scan_date, zones)
+    zone_ids = db.upsert_zones(symbol, scan_date, all_zones)
     vcp_id = db.upsert_vcp_setup(symbol, scan_date, setup)
 
     backing_zone_id = None
     matching_kind = "demand" if direction == "bullish" else "supply"
-    for z, zid in zip(zones, zone_ids):
+    for z, zid in zip(all_zones, zone_ids):
         if z.kind == matching_kind:
             backing_zone_id = zid
             if z.fresh:

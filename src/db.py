@@ -67,10 +67,12 @@ CREATE TABLE IF NOT EXISTS zones (
     symbol TEXT NOT NULL,
     scan_date TEXT NOT NULL,
     kind TEXT,
+    distal_price REAL, proximal_price REAL,
     zone_low REAL, zone_high REAL,
     origin_move_pct REAL,
     fresh INTEGER,
-    tests INTEGER
+    tests INTEGER,
+    broken INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS vcp_setups (
@@ -133,11 +135,29 @@ def _migrate_scan_results_add_direction(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_zones_add_precision_columns(conn: sqlite3.Connection) -> None:
+    """zones gained distal_price/proximal_price/broken columns (Step 15.0,
+    precision zone boundaries). Unlike scan_results, this table already
+    holds real persisted zone data worth keeping, so this is a real
+    ALTER TABLE ADD COLUMN migration, not a drop/recreate."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(zones)")]
+    if not cols:
+        return  # table doesn't exist yet -- SCHEMA below creates it fresh with all columns
+    if "distal_price" not in cols:
+        conn.execute("ALTER TABLE zones ADD COLUMN distal_price REAL")
+    if "proximal_price" not in cols:
+        conn.execute("ALTER TABLE zones ADD COLUMN proximal_price REAL")
+    if "broken" not in cols:
+        conn.execute("ALTER TABLE zones ADD COLUMN broken INTEGER")
+    conn.commit()
+
+
 def init_db() -> None:
     """Create all tables if they don't already exist. Safe to run repeatedly."""
     conn = get_connection()
     try:
         _migrate_scan_results_add_direction(conn)
+        _migrate_zones_add_precision_columns(conn)
         conn.executescript(SCHEMA)
         conn.commit()
         print(f"Database ready at: {DB_PATH}")
@@ -403,10 +423,11 @@ def upsert_zones(symbol: str, scan_date: str, zones: list) -> list:
         for z in zones:
             cur = conn.execute(
                 """INSERT INTO zones
-                   (symbol, scan_date, kind, zone_low, zone_high, origin_move_pct, fresh, tests)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (symbol, scan_date, z.kind, z.zone_low, z.zone_high,
-                 z.origin_move_pct, int(z.fresh), z.tests),
+                   (symbol, scan_date, kind, distal_price, proximal_price,
+                    zone_low, zone_high, origin_move_pct, fresh, tests, broken)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (symbol, scan_date, z.kind, z.distal_price, z.proximal_price,
+                 z.zone_low, z.zone_high, z.origin_move_pct, int(z.fresh), z.tests, int(z.broken)),
             )
             ids.append(cur.lastrowid)
         conn.commit()

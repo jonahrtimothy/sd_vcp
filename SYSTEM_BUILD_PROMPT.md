@@ -34,6 +34,31 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   together transitively on longer histories; fixed and validated on 475
   days of real RELIANCE data: went from 2 meaningless mega-zones spanning
   400+ bars each down to 5 differentiated real zones spanning 54-262 bars).
+  **Step 15.0 (Aug 31/Sep 1 2026, Minervini/SEPA alignment pass)**: zone
+  boundaries rebuilt as precise distal/proximal lines (ICT "order block"
+  equivalent) from the origin candle(s) at the base edge, replacing the old
+  whole-base high/low range. `Zone` gained `distal_price`/`proximal_price`
+  (true invalidation boundary vs. first-reaction boundary) and `broken`
+  (a CLOSE through distal, distinct from merely `tests`/touching proximal);
+  `zone_low`/`zone_high` are now `min`/`max` of the two new fields so
+  existing chart-shading code needed no changes. New
+  `zone_from_vcp_contraction(df, direction, setup)` builds the zone tied to
+  an ACTIVE VCP setup directly from `vcp.py`'s own final, tightest
+  contraction, not an independently-detected origin -- this unifies
+  stop-loss and zone-invalidation into one number instead of two separately
+  computed ones that could drift apart; `scanner.py` and the dashboard both
+  now use this for the setup's backing zone and its stop-loss. Validated on
+  real HDFCBANK data: zones went from wide multi-week boxes (e.g. the old
+  "supply (tested x98)" spanning a whole base) to tight 1-3 point bands;
+  the active bearish setup's stop-loss tightened from Rs843.00 (old
+  whole-base high) to Rs734.40 (new distal line off the final contraction)
+  -- risk per share dropped from Rs127.90 to Rs19.30, a ~7x tighter,
+  more realistic risk definition. Could not pinpoint the exact hand-drawn
+  856.80/817.00 example from the handoff doc (that discussion happened
+  outside this session, no date/context available to locate it) -- flagged
+  honestly rather than claimed as matched; the mechanism itself is
+  confirmed working correctly against real data by the broader validation
+  above.
 - `vcp.py` — VCP contraction detection + scoring (0-100) + breakout trigger
   check. Uses TOLERANT/fractional scoring for the contraction-ratio and
   volume-decay rules (a majority of steps must pass, not every single
@@ -563,6 +588,17 @@ data:
 **Phase 6 — Studio dashboard** ✅ DONE (Step 10, extended Step 12): 5 pages now (Daily Scan, Symbol Detail, Position Calculator, Watchlist Management, Scan History) in `src/dashboard/app.py`, validated by actually running `streamlit run` and driving it in a real browser against the real DB (see Section 1 above for detail).
 
 **Phase 7 — Backtest harness** ❌ NOT STARTED (correctly deferred — not needed yet).
+
+**Step 15 — Minervini/SEPA alignment pass** 🔄 IN PROGRESS (started Sep 1 2026, decided with Jonah in chat, engineering translation handed off via `CLAUDE_CODE_BUILD_PROMPT_step15.md`). 8 sub-steps (15.0-15.8), tracked individually as they land:
+- **15.0 — Precision zone boundaries** ✅ DONE, see Section 1 above.
+- 15.1 — Position Calculator dual mode (cash/futures) + instrument-scope doc fix — not started.
+- 15.2 — Full NSE F&O universe (~180-210 names) replacing the 40-name watchlist — not started.
+- 15.3 — 8-point Trend Template completion + new RS Rating module — not started.
+- 15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags — not started.
+- 15.5 — VCP base staging + (Time)(Depth)(Ticks) notation — not started.
+- 15.6 — Confluence: wire in RS Rating — not started (depends on 15.3).
+- 15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan — not started (depends on 15.0, done).
+- 15.8 — Documentation hygiene — ongoing alongside each sub-step, same discipline as every prior step.
 
 **Beyond the original 7 phases**: Position Calculator (Step 12) and Nifty-alignment + sector-relative-strength confluence signals (Step 13) -- both DONE, see Section 1 above. MVP scope explicitly locked to equities-only; commodities and index-as-tradeable-symbol support deferred to a later phase (Jonah's decision, Aug 31 2026).
 
