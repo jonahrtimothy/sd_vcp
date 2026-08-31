@@ -14,7 +14,7 @@ returns 'insufficient_data' if the input is shorter than that.
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 import pandas as pd
 import numpy as np
 
@@ -106,4 +106,135 @@ def classify_stage(df: pd.DataFrame) -> StageResult:
     return StageResult(
         stage=stage, price=price, sma50=s50, sma150=s150, sma200=s200,
         sma200_slope_pct=s200_slope_pct, reason=reason,
+    )
+
+
+# --- 8-point Trend Template (Step 15.3, Aug 31 2026 addition, Section 2) ---
+# Items 1-5 (MA structure) are already covered by classify_stage() above;
+# this adds items 6-8 (52-week range, RS Rating) as a Trend Template
+# pass/fail check ALONGSIDE Stage, not a replacement -- a stock can be
+# Stage 2 by MA structure alone yet fail the Trend Template (Minervini's
+# own "broken leader" caution).
+
+TREND_TEMPLATE_MIN_BARS = 252    # a full trading year, for the 52-week range check
+TREND_TEMPLATE_SLOPE_WINDOW = 21  # ~1 calendar month of trading days
+RS_RATING_BULLISH_MIN = 70        # Section 2 item 8: "no less than 70"
+RS_RATING_BEARISH_MAX = 100 - RS_RATING_BULLISH_MIN  # mirrored threshold for Stage 4/short candidates
+PCT_ABOVE_52W_LOW_MIN = 25.0       # Section 2 item 6
+PCT_BELOW_52W_HIGH_MAX = 25.0      # Section 2 item 7
+
+
+@dataclass
+class TrendTemplateResult:
+    # individual checks, so Section 9 output can show exactly which one
+    # failed rather than collapsing everything into one opaque boolean
+    price_above_ma50: bool
+    price_above_ma150_ma200: bool
+    ma150_above_ma200: bool
+    ma50_above_ma150_ma200: bool
+    ma200_trending_up_1m: bool
+    pct_above_52w_low: float
+    pct_above_52w_low_ok: bool       # >= 25% above the 52-week low
+    pct_below_52w_high: float
+    pct_below_52w_high_ok: bool      # within 25% of the 52-week high
+    rs_rating: Optional[int]
+    rs_rating_ok: bool                # >= 70 (bullish) -- see clean_stage4 for the mirrored bearish check
+    clean_stage2: bool                 # ALL 8 checks pass
+    clean_stage4: bool                 # mirrored bearish read: near 52w low + weak RS (MA-structure mirror comes from classify_stage's own Stage 4 read, not duplicated here)
+    reason: str
+
+    def summary(self) -> str:
+        if self.clean_stage2:
+            return f"Clean Trend Template pass (all 8 checks) -- RS Rating {self.rs_rating}"
+        return f"Trend Template: {self.reason}"
+
+
+def classify_trend_template(df: pd.DataFrame, rs_rating: Optional[int] = None) -> TrendTemplateResult:
+    """
+    df: OHLCV, ascending, >= TREND_TEMPLATE_MIN_BARS (252, ~1 trading year)
+    for a real 52-week range read -- returns an honest insufficient-data
+    result otherwise, never a guessed one.
+
+    rs_rating: 1-99, computed separately across the whole scanned universe
+    (rs_rating.py) since it's inherently a cross-symbol comparison, not
+    something a single symbol's OHLCV can produce alone. None if not yet
+    computed/available -- the RS check then honestly fails rather than
+    being assumed passing.
+
+    Recomputes 50/150/200-day SMAs directly from `df` rather than reusing
+    classify_stage()'s StageResult, since this needs its OWN 1-month slope
+    window (TREND_TEMPLATE_SLOPE_WINDOW=21) distinct from classify_stage's
+    faster-reacting SLOPE_WINDOW=10 -- the two serve different purposes
+    (Stage classification vs. this specific Trend Template checkpoint) and
+    deliberately are not forced to share one number.
+    """
+    df = df.reset_index(drop=True)
+
+    if len(df) < TREND_TEMPLATE_MIN_BARS:
+        return TrendTemplateResult(
+            price_above_ma50=False, price_above_ma150_ma200=False, ma150_above_ma200=False,
+            ma50_above_ma150_ma200=False, ma200_trending_up_1m=False,
+            pct_above_52w_low=0.0, pct_above_52w_low_ok=False,
+            pct_below_52w_high=0.0, pct_below_52w_high_ok=False,
+            rs_rating=rs_rating, rs_rating_ok=False,
+            clean_stage2=False, clean_stage4=False,
+            reason=f"insufficient_data -- need >= {TREND_TEMPLATE_MIN_BARS} bars (1 trading year), got {len(df)}",
+        )
+
+    sma50 = df["close"].rolling(50).mean()
+    sma150 = df["close"].rolling(150).mean()
+    sma200 = df["close"].rolling(200).mean()
+
+    price = float(df["close"].iloc[-1])
+    s50, s150, s200 = float(sma50.iloc[-1]), float(sma150.iloc[-1]), float(sma200.iloc[-1])
+    s200_prev_month = float(sma200.iloc[-1 - TREND_TEMPLATE_SLOPE_WINDOW])
+    ma200_trending_up_1m = s200 > s200_prev_month
+
+    low_52w = float(df["low"].iloc[-TREND_TEMPLATE_MIN_BARS:].min())
+    high_52w = float(df["high"].iloc[-TREND_TEMPLATE_MIN_BARS:].max())
+    pct_above_52w_low = (price - low_52w) / low_52w * 100 if low_52w else 0.0
+    pct_below_52w_high = (high_52w - price) / high_52w * 100 if high_52w else 0.0
+
+    checks = {
+        "price_above_ma50": price > s50,
+        "price_above_ma150_ma200": price > s150 and price > s200,
+        "ma150_above_ma200": s150 > s200,
+        "ma50_above_ma150_ma200": s50 > s150 and s50 > s200,
+        "ma200_trending_up_1m": ma200_trending_up_1m,
+        "pct_above_52w_low_ok": pct_above_52w_low >= PCT_ABOVE_52W_LOW_MIN,
+        "pct_below_52w_high_ok": pct_below_52w_high <= PCT_BELOW_52W_HIGH_MAX,
+        "rs_rating_ok": rs_rating is not None and rs_rating >= RS_RATING_BULLISH_MIN,
+    }
+    clean_stage2 = all(checks.values())
+
+    # mirrored bearish read: near the 52-week low + weak RS (the MA-
+    # structure mirror is classify_stage()'s own Stage 4 read, not
+    # duplicated here -- this just adds the two checks Stage 4 alone
+    # doesn't cover)
+    clean_stage4 = (
+        pct_above_52w_low <= PCT_ABOVE_52W_LOW_MIN
+        and rs_rating is not None and rs_rating <= RS_RATING_BEARISH_MAX
+    )
+
+    if clean_stage2:
+        reason = "clean Stage 2 -- all 8 Trend Template checks pass"
+    else:
+        failed = [k for k, v in checks.items() if not v]
+        reason = f"MA structure only partially clean -- failed: {', '.join(failed)}"
+
+    return TrendTemplateResult(
+        price_above_ma50=checks["price_above_ma50"],
+        price_above_ma150_ma200=checks["price_above_ma150_ma200"],
+        ma150_above_ma200=checks["ma150_above_ma200"],
+        ma50_above_ma150_ma200=checks["ma50_above_ma150_ma200"],
+        ma200_trending_up_1m=checks["ma200_trending_up_1m"],
+        pct_above_52w_low=round(pct_above_52w_low, 1),
+        pct_above_52w_low_ok=checks["pct_above_52w_low_ok"],
+        pct_below_52w_high=round(pct_below_52w_high, 1),
+        pct_below_52w_high_ok=checks["pct_below_52w_high_ok"],
+        rs_rating=rs_rating,
+        rs_rating_ok=checks["rs_rating_ok"],
+        clean_stage2=clean_stage2,
+        clean_stage4=clean_stage4,
+        reason=reason,
     )

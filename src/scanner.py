@@ -209,10 +209,25 @@ def run_scan(cfg: dict) -> None:
 
     log.info(f"=== Scanning {len(symbols)} F&O universe symbols ===")
     t0 = time.time()
+
+    # Load once, reused both for RS Rating's cross-symbol batch computation
+    # (Step 15.3) and the per-symbol pipeline below -- avoids reading each
+    # symbol's OHLCV from the DB twice.
+    ohlcv_by_symbol = {s: db.get_ohlcv(s) for s in symbols}
+
+    from rs_rating import compute_rs_ratings
+    rs_weights = cfg.get("rs_rating", {}).get("quarter_weights", [0.4, 0.2, 0.2, 0.2])
+    rs_ratings = compute_rs_ratings(ohlcv_by_symbol, rs_weights)
+    if rs_ratings:
+        n_saved = db.update_rs_ratings(rs_ratings)
+        log.info(f"RS Rating computed for {n_saved}/{len(symbols)} symbols (rest lack enough history for a full 4-quarter blend)")
+    else:
+        log.warning("RS Rating: no symbols had enough history to compute -- all Trend Template RS checks will report unavailable")
+
     skipped_no_history = 0
     for i, symbol in enumerate(symbols, 1):
         try:
-            df = db.get_ohlcv(symbol)
+            df = ohlcv_by_symbol[symbol]
             if len(df) < min_bars:
                 skipped_no_history += 1
                 if skipped_no_history <= 5 or i == len(symbols):

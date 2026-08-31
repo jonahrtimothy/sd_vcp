@@ -66,8 +66,19 @@ fundamentals:
   # rather than guessing
   min_quarters_required: 6
   # on/off switch for the sector-relative-strength confluence input --
-  # exposed as a checkbox on the dashboard (Watchlist Management page)
+  # exposed as a checkbox on the dashboard (Excluded Symbols page)
   sector_strength_enabled: true
+
+# Relative Strength (RS) Rating -- Step 15.3 (Aug 31 2026 addition,
+# Section 7/2 item 8). Approximates IBD's RS Rating: a weighted blend of
+# trailing quarterly returns, percentile-ranked against the whole scanned
+# universe. NOT the real published IBD metric -- see src/rs_rating.py's
+# docstring for the full limitation note.
+rs_rating:
+  # weights for [most recent quarter, 2nd, 3rd, 4th], most-recent-first.
+  # Must sum to 1.0. The commonly-cited public approximation of IBD's
+  # methodology: heaviest weight on the most recent ~63 trading days.
+  quarter_weights: [0.4, 0.2, 0.2, 0.2]
 
 data:
   broker: kite_connect

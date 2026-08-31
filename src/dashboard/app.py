@@ -25,7 +25,7 @@ import streamlit as st
 import db
 from config import load_config, update_watchlist
 from confluence import compute_confluence
-from stage import classify_stage
+from stage import classify_stage, classify_trend_template
 from vcp import detect_vcp, check_trigger
 from zones import detect_zones, zone_from_vcp_contraction
 from charts import build_price_chart
@@ -237,6 +237,20 @@ def page_symbol_detail(cfg: dict):
 
             st.markdown(f"**1. Instrument / Stage:** {symbol} | {stage_badge(stage_result.stage)}", unsafe_allow_html=True)
             st.caption(stage_result.reason)
+            fund_row_for_rs = db.get_fundamentals(symbol)
+            rs_rating = fund_row_for_rs.get("rs_rating") if fund_row_for_rs else None
+            tt = classify_trend_template(df, rs_rating)
+            if tt.clean_stage2:
+                st.caption(f"Trend Template: ✅ clean pass, all 8 checks (RS Rating {tt.rs_rating})")
+            else:
+                st.caption(
+                    f"Trend Template: MA structure alone isn't a clean Stage 2 -- "
+                    f"52w low {tt.pct_above_52w_low:+.0f}% (need >=25%), "
+                    f"52w high {tt.pct_below_52w_high:.0f}% below (need <=25%), "
+                    f"RS Rating {tt.rs_rating if tt.rs_rating is not None else 'unavailable'} (need >=70). "
+                    f"Minervini's own 'broken leader' caution: don't treat a stock as recovered just "
+                    f"because its moving averages turned up, if it's still far from its highs and weak vs. the market."
+                )
             st.markdown(f"**2. VCP:** {len(setup.contractions)} contractions, ratio_ok={setup.contraction_ratio_ok}, vol_decay_ok={setup.volume_decay_ok}, quality_score={setup.quality_score:.0f}")
             st.markdown(
                 f"**3. Entry trigger:** {'Close above' if direction == 'bullish' else 'Close below'} "

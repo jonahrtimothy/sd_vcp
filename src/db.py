@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     eps_yoy_growth_pct_prior REAL,
     profit_yoy_growth_pct REAL,
     earnings_trend TEXT,
+    rs_rating INTEGER,
     fetched_at TEXT
 );
 """
@@ -152,12 +153,24 @@ def _migrate_zones_add_precision_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_fundamentals_add_rs_rating(conn: sqlite3.Connection) -> None:
+    """fundamentals gained an rs_rating column (Step 15.3). Real cached
+    data worth keeping, so ALTER TABLE ADD COLUMN, not drop/recreate."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(fundamentals)")]
+    if not cols:
+        return
+    if "rs_rating" not in cols:
+        conn.execute("ALTER TABLE fundamentals ADD COLUMN rs_rating INTEGER")
+        conn.commit()
+
+
 def init_db() -> None:
     """Create all tables if they don't already exist. Safe to run repeatedly."""
     conn = get_connection()
     try:
         _migrate_scan_results_add_direction(conn)
         _migrate_zones_add_precision_columns(conn)
+        _migrate_fundamentals_add_rs_rating(conn)
         conn.executescript(SCHEMA)
         conn.commit()
         print(f"Database ready at: {DB_PATH}")
@@ -378,14 +391,30 @@ def get_india_vix(start_date: str = None, end_date: str = None) -> pd.DataFrame:
 def upsert_fundamentals(record: dict) -> None:
     """record keys: symbol, sector, industry, quarters_json,
     eps_yoy_growth_pct, eps_yoy_growth_pct_prior, profit_yoy_growth_pct,
-    earnings_trend. One row per symbol -- overwritten on each re-scrape."""
+    earnings_trend. One row per symbol -- overwritten on each re-scrape.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE naming only ITS OWN columns
+    (not a blanket INSERT OR REPLACE) so it never touches rs_rating --
+    that's updated on a completely different cadence (every scan run,
+    universe-wide) by update_rs_ratings() below. A blanket REPLACE here
+    would silently wipe rs_rating back to NULL every time the weekly
+    earnings scrape re-runs for a symbol -- caught before shipping,
+    while wiring up Step 15.3."""
     conn = get_connection()
     try:
         conn.execute(
-            """INSERT OR REPLACE INTO fundamentals
+            """INSERT INTO fundamentals
                (symbol, sector, industry, quarters_json, eps_yoy_growth_pct,
                 eps_yoy_growth_pct_prior, profit_yoy_growth_pct, earnings_trend, fetched_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(symbol) DO UPDATE SET
+                 sector=excluded.sector, industry=excluded.industry,
+                 quarters_json=excluded.quarters_json,
+                 eps_yoy_growth_pct=excluded.eps_yoy_growth_pct,
+                 eps_yoy_growth_pct_prior=excluded.eps_yoy_growth_pct_prior,
+                 profit_yoy_growth_pct=excluded.profit_yoy_growth_pct,
+                 earnings_trend=excluded.earnings_trend,
+                 fetched_at=excluded.fetched_at""",
             (
                 record["symbol"], record.get("sector"), record.get("industry"),
                 record.get("quarters_json"), record.get("eps_yoy_growth_pct"),
@@ -394,6 +423,27 @@ def upsert_fundamentals(record: dict) -> None:
             ),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def update_rs_ratings(ratings: dict) -> int:
+    """Bulk-updates JUST the rs_rating column for each {symbol: rating} in
+    `ratings`, leaving every other cached fundamentals field untouched.
+    RS Rating is recomputed every scan run (cross-symbol, universe-
+    relative) -- a different cadence from the rest of this table's
+    weekly-cached earnings-scrape data, hence a separate, narrower update
+    path from upsert_fundamentals() rather than sharing one."""
+    conn = get_connection()
+    try:
+        for symbol, rating in ratings.items():
+            conn.execute(
+                """INSERT INTO fundamentals (symbol, rs_rating) VALUES (?, ?)
+                   ON CONFLICT(symbol) DO UPDATE SET rs_rating = excluded.rs_rating""",
+                (symbol, int(rating)),
+            )
+        conn.commit()
+        return len(ratings)
     finally:
         conn.close()
 
