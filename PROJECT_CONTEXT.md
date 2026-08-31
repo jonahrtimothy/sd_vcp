@@ -165,11 +165,14 @@ scope decisions above.
 ## What this project is
 A personal trading analysis system for Jonah, combining supply/demand zone
 theory + VCP (Minervini methodology) + India-specific confluence data
-(FII/DII, participant OI, delivery%), for swing trading + futures only (no
-options — "F&O-eligible" anywhere in these docs is a stock UNIVERSE
-liquidity/eligibility filter only, never a signal to trade options), India-
-first with a market-agnostic core designed to scale globally later. Local
-project path: `C:\Jonah\sd_vcp`.
+(FII/DII, participant OI, delivery%), for swing trading, cash equity or
+futures per trade (corrected Sep 1 2026, Step 15.1 -- this line previously
+said "futures only," which didn't match `trading_strategy_system_prompt.md`'s
+actual stated scope; the trader picks the vehicle per trade, options remain
+fully excluded regardless of vehicle -- "F&O-eligible" anywhere in these
+docs is a stock UNIVERSE liquidity/eligibility filter only, never a signal
+to trade options), India-first with a market-agnostic core designed to
+scale globally later. Local project path: `C:\Jonah\sd_vcp`.
 
 ## The two living spec documents (both in the project folder — READ THESE FIRST)
 1. **`trading_strategy_system_prompt.md`** — the ANALYTICAL spec: Stage

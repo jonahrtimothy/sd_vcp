@@ -591,7 +591,7 @@ data:
 
 **Step 15 — Minervini/SEPA alignment pass** 🔄 IN PROGRESS (started Sep 1 2026, decided with Jonah in chat, engineering translation handed off via `CLAUDE_CODE_BUILD_PROMPT_step15.md`). 8 sub-steps (15.0-15.8), tracked individually as they land:
 - **15.0 — Precision zone boundaries** ✅ DONE, see Section 1 above.
-- 15.1 — Position Calculator dual mode (cash/futures) + instrument-scope doc fix — not started.
+- **15.1 — Position Calculator dual mode** ✅ DONE. New Vehicle toggle (Futures/Cash equity) on `page_calculator()`, using the Step 12 pending-override session-state pattern. Futures mode unchanged (lot-size fetch, lot rounding); Cash mode is a plain share count from risk%/stop distance, no lot rounding, no margin math -- lot-size UI hidden entirely in Cash mode. `PROJECT_CONTEXT.md`'s "futures only" summary line corrected. Real bug found and fixed while validating: `capital`/`risk_pct` had no stable `key=`, so a rerun triggered by the UNRELATED "Fetch from Kite" button was silently wiping capital the user had already typed -- same root cause/fix as the Step 12 lot-size bug (give every widget whose value must survive a same-page rerun a real `key=`). Validated live: HDFCBANK futures (1 lot=650 shares, Rs12,545 risk, capped by lot granularity) vs. cash (777 shares, Rs14,996 risk, no lot-rounding artifact) at the identical entry/stop/capital -- materially different in exactly the expected way.
 - 15.2 — Full NSE F&O universe (~180-210 names) replacing the 40-name watchlist — not started.
 - 15.3 — 8-point Trend Template completion + new RS Rating module — not started.
 - 15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags — not started.

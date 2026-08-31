@@ -239,9 +239,11 @@ def page_symbol_detail(cfg: dict):
             target1 = setup.trigger_level + 2 * risk if direction == "bullish" else setup.trigger_level - 2 * risk
             target2 = setup.trigger_level + 3 * risk if direction == "bullish" else setup.trigger_level - 3 * risk
             st.markdown(f"**5. Targets:** T1 (2R) = {target1:.2f}, T2 (3R) = {target2:.2f} | illustrative R-multiples -- size to your own max-risk-per-trade rule")
+            st.caption("Sizing sent to the calculator defaults to Futures -- switch to Cash equity there if that's the vehicle for this trade.")
             if st.button("Send to Position Calculator"):
                 st.session_state["calc_symbol"] = symbol
                 st.session_state["calc_direction"] = direction
+                st.session_state["calc_vehicle"] = "Futures"
                 st.session_state["calc_entry"] = float(setup.trigger_level)
                 st.session_state["calc_stop"] = float(stop)
                 st.session_state["calc_target1"] = float(target1)
@@ -372,6 +374,10 @@ def page_calculator(cfg: dict):
     if st.session_state.pop("calc_prefill_pending", False):
         st.session_state["calc_symbol_w"] = st.session_state.pop("calc_symbol", "")
         st.session_state["calc_direction_w"] = st.session_state.pop("calc_direction", "bullish")
+        # Default Futures on arrival from Symbol Detail -- matches the
+        # existing pre-Step-15.1 behavior; Jonah switches manually for a
+        # cash idea rather than the tool trying to infer intent (Step 15.1).
+        st.session_state["calc_vehicle_w"] = st.session_state.pop("calc_vehicle", "Futures")
         st.session_state["calc_entry_w"] = float(st.session_state.pop("calc_entry", 0.0))
         st.session_state["calc_stop_w"] = float(st.session_state.pop("calc_stop", 0.0))
         st.session_state["calc_target1_w"] = float(st.session_state.pop("calc_target1", 0.0))
@@ -392,12 +398,29 @@ def page_calculator(cfg: dict):
     if "_calc_lot_fetch_pending" in st.session_state:
         st.session_state["calc_lot_size_w"] = st.session_state.pop("_calc_lot_fetch_pending")
 
+    # One-time defaults for capital/risk_pct -- these are never programmatically
+    # set elsewhere (pure user input), but still need a stable key: without one,
+    # a rerun triggered by an UNRELATED button (e.g. "Fetch from Kite") was
+    # found to silently reset them to their bare defaults, wiping out capital
+    # the user had already typed. Same root cause as the lot-size bug found
+    # and fixed in Step 12 -- any widget whose value must survive a
+    # same-page rerun triggered by other code needs a real key.
+    if "calc_capital_w" not in st.session_state:
+        st.session_state["calc_capital_w"] = 0.0
+    if "calc_risk_pct_w" not in st.session_state:
+        st.session_state["calc_risk_pct_w"] = 1.0
+
     lot_msg = st.session_state.pop("_calc_lot_msg", None)
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Trade setup")
+        vehicle = st.radio(
+            "Vehicle", ["Futures", "Cash equity"], horizontal=True, key="calc_vehicle_w",
+            help="Futures: sized in lot multiples, real lot size fetchable from Kite. "
+                 "Cash equity: plain share count, no lot rounding, no leverage/margin math.",
+        )
         symbol = st.text_input("Symbol (optional, for lot-size lookup)", key="calc_symbol_w")
         direction = st.radio("Direction", ["bullish", "bearish"], horizontal=True, key="calc_direction_w")
         entry = st.number_input("Entry price", min_value=0.0, format="%.2f", key="calc_entry_w")
@@ -405,54 +428,76 @@ def page_calculator(cfg: dict):
         target1 = st.number_input("Target 1", min_value=0.0, format="%.2f", key="calc_target1_w")
         target2 = st.number_input("Target 2", min_value=0.0, format="%.2f", key="calc_target2_w")
 
-        lot_col1, lot_col2 = st.columns([2, 1])
-        lot_size = lot_col1.number_input("Lot size", min_value=1, step=1, key="calc_lot_size_w")
-        if lot_msg:
-            level, text = lot_msg
-            getattr(st, level)(text)
-        if lot_col2.button("Fetch from Kite", help="Look up the real stock-futures lot size for the symbol above"):
-            if not symbol:
-                st.warning("Enter a symbol first.")
-            else:
-                try:
-                    from data.kite_ohlcv import get_lot_size
-                    fetched = get_lot_size(symbol.upper())
-                    if fetched:
-                        st.session_state["_calc_lot_fetch_pending"] = fetched
-                        st.rerun()
-                    else:
-                        st.warning(f"No F&O lot size found for {symbol.upper()}.")
-                except Exception as e:
-                    st.warning(f"Lookup failed: {e}")
+        lot_size = 1
+        if vehicle == "Futures":
+            lot_col1, lot_col2 = st.columns([2, 1])
+            lot_size = lot_col1.number_input("Lot size", min_value=1, step=1, key="calc_lot_size_w")
+            if lot_msg:
+                level, text = lot_msg
+                getattr(st, level)(text)
+            if lot_col2.button("Fetch from Kite", help="Look up the real stock-futures lot size for the symbol above"):
+                if not symbol:
+                    st.warning("Enter a symbol first.")
+                else:
+                    try:
+                        from data.kite_ohlcv import get_lot_size
+                        fetched = get_lot_size(symbol.upper())
+                        if fetched:
+                            st.session_state["_calc_lot_fetch_pending"] = fetched
+                            st.rerun()
+                        else:
+                            st.warning(f"No F&O lot size found for {symbol.upper()}.")
+                    except Exception as e:
+                        st.warning(f"Lookup failed: {e}")
+        else:
+            st.caption("Cash equity mode: plain share count from risk % and stop distance -- no lot rounding, no margin/leverage.")
 
     with col2:
         st.subheader("Risk & capital")
-        capital = st.number_input("Capital available (Rs)", min_value=0.0, value=0.0, step=10000.0, format="%.2f")
-        risk_pct = st.number_input("Max risk per trade (%)", min_value=0.01, max_value=100.0, value=1.0, step=0.25)
+        capital = st.number_input("Capital available (Rs)", min_value=0.0, step=10000.0, format="%.2f", key="calc_capital_w")
+        risk_pct = st.number_input("Max risk per trade (%)", min_value=0.01, max_value=100.0, step=0.25, key="calc_risk_pct_w")
 
         risk_per_share = abs(entry - stop)
-        risk_per_lot = risk_per_share * lot_size
 
         st.divider()
         st.subheader("Suggested position size")
-        if risk_per_lot <= 0 or capital <= 0:
-            st.info("Enter entry, stop, lot size, and capital to compute a suggested position size.")
-            max_lots = 0
-            suggested_qty = 0
-            actual_risk_amount = 0.0
+
+        if vehicle == "Futures":
+            risk_per_lot = risk_per_share * lot_size
+            if risk_per_lot <= 0 or capital <= 0:
+                st.info("Enter entry, stop, lot size, and capital to compute a suggested position size.")
+                max_lots = 0
+                suggested_qty = 0
+                actual_risk_amount = 0.0
+            else:
+                max_risk_amount = capital * risk_pct / 100
+                max_lots = int(max_risk_amount // risk_per_lot)
+                suggested_qty = max_lots * lot_size
+                actual_risk_amount = max_lots * risk_per_lot
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Lots", max_lots)
+                m2.metric("Quantity", suggested_qty)
+                m3.metric("Actual risk (Rs)", f"{actual_risk_amount:,.0f}")
+
+                notional = suggested_qty * entry
+                st.caption(f"Illustrative notional value: Rs{notional:,.0f} (quantity x entry price -- not your real margin requirement)")
         else:
-            max_risk_amount = capital * risk_pct / 100
-            max_lots = int(max_risk_amount // risk_per_lot)
-            suggested_qty = max_lots * lot_size
-            actual_risk_amount = max_lots * risk_per_lot
+            if risk_per_share <= 0 or capital <= 0:
+                st.info("Enter entry, stop, and capital to compute a suggested position size.")
+                suggested_qty = 0
+                actual_risk_amount = 0.0
+            else:
+                max_risk_amount = capital * risk_pct / 100
+                suggested_qty = int(max_risk_amount // risk_per_share)
+                actual_risk_amount = suggested_qty * risk_per_share
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Lots", max_lots)
-            m2.metric("Quantity", suggested_qty)
-            m3.metric("Actual risk (Rs)", f"{actual_risk_amount:,.0f}")
+                m1, m2 = st.columns(2)
+                m1.metric("Shares", suggested_qty)
+                m2.metric("Actual risk (Rs)", f"{actual_risk_amount:,.0f}")
 
-            notional = suggested_qty * entry
-            st.caption(f"Illustrative notional value: Rs{notional:,.0f} (quantity x entry price -- not your real margin requirement)")
+                capital_required = suggested_qty * entry
+                st.caption(f"Capital required: Rs{capital_required:,.0f} (quantity x entry price, full payment -- cash equity has no leverage/margin in this calculation)")
 
     st.divider()
     st.subheader("Targets")
