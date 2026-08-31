@@ -39,9 +39,17 @@ def update_watchlist(new_watchlist: list[str]) -> None:
     import re
 
     text = CONFIG_PATH.read_text(encoding="utf-8")
-    new_block = "watchlist:\n" + "\n".join(f"  - {s}" for s in new_watchlist) + "\n"
+    if new_watchlist:
+        new_block = "watchlist:\n" + "\n".join(f"  - {s}" for s in new_watchlist) + "\n"
+    else:
+        # "watchlist:\n" with zero following "- item" lines would parse as
+        # YAML null, not an empty list -- crashes anything that iterates
+        # cfg["watchlist"]. Write the inline empty-list form instead.
+        new_block = "watchlist: []\n"
 
-    pattern = re.compile(r"^watchlist:\n(?:  - .*\n)*", re.MULTILINE)
+    # matches both the multi-line "- item" form and the inline "[]" form,
+    # so this function can rewrite either into either.
+    pattern = re.compile(r"^watchlist:(?: \[\])?\n(?:  - .*\n)*", re.MULTILINE)
     if not pattern.search(text):
         raise ValueError("Could not find a `watchlist:` block in config.yaml to replace.")
 

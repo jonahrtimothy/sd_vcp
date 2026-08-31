@@ -6,6 +6,7 @@ __pycache__/
 data/raw/
 data/*.db
 data/*.log
+data/*.json
 src/data/data/
 *.log
 .streamlit/secrets.toml

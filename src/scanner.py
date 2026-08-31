@@ -1,8 +1,10 @@
 """
 Universe scanner (Phase 5): orchestrates the full pipeline -- data refresh
 (with gap backfill) then fundamentals -> zones -> VCP -> stage -> confluence
--- across the whole watchlist in config.yaml, persisting results so the
-dashboard has something to read.
+-- across the full NSE F&O universe (Step 15.2: sourced live from Kite's
+own instruments master, ~210 stocks, minus config.yaml's `watchlist` which
+is now an EXCLUDE list, not the scanned universe itself), persisting
+results so the dashboard has something to read.
 
 Two entrypoints, matching SYSTEM_BUILD_PROMPT.md Section 6's intended daily
 flow (thin CLI wrappers live in scripts/refresh_data.py and scripts/run_scan.py):
@@ -10,7 +12,7 @@ flow (thin CLI wrappers live in scripts/refresh_data.py and scripts/run_scan.py)
       participant_oi/delivery_pct (NSE archives, backfillable) since
       whatever was last saved; cash FII/DII is fetched live-only (NSE has
       no confirmed historical endpoint for it -- see PROJECT_CONTEXT.md).
-  run_scan(cfg) -- for each watchlist symbol: fundamentals filter first
+  run_scan(cfg) -- for each universe symbol: fundamentals filter first
       (Section 5 -- decides eligibility before technicals run at all),
       then zones + VCP (both directions) + stage + confluence, persisted
       to zones/vcp_setups/scan_results.
@@ -19,8 +21,11 @@ Both continue past a single symbol's failure (log it, skip it) rather than
 crashing the whole run (SYSTEM_BUILD_PROMPT.md Section 10).
 """
 
+import json
 import logging
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -44,24 +49,57 @@ logging.basicConfig(
 )
 log = logging.getLogger("scanner")
 
+UNIVERSE_CACHE_PATH = Path(__file__).parent.parent / "data" / "fno_universe_cache.json"
+
+
+def get_scan_symbols(cfg: dict, require_live: bool = False) -> list:
+    """
+    The scan universe (Step 15.2): Kite's live F&O universe minus
+    config.yaml's `watchlist` (repurposed as an exclude list -- see the
+    comment in config.yaml for why). Cached to disk after a successful
+    live fetch so run_scan() can operate on the last-known universe
+    without needing a live, non-expired Kite session just to enumerate
+    symbols -- the scan itself only reads OHLCV already in the DB.
+    `require_live=True` (used by refresh_all_data, which already needs
+    Kite per-symbol anyway) always re-fetches, catching newly-added F&O names.
+    """
+    excludes = set(cfg.get("watchlist", []) or [])
+
+    if not require_live and UNIVERSE_CACHE_PATH.exists():
+        cached = json.loads(UNIVERSE_CACHE_PATH.read_text(encoding="utf-8"))
+        return [s for s in cached["universe"] if s not in excludes]
+
+    from data.kite_ohlcv import get_fno_universe
+    universe = get_fno_universe()
+    UNIVERSE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    UNIVERSE_CACHE_PATH.write_text(
+        json.dumps({"universe": universe, "fetched_at": datetime.now().isoformat()}),
+        encoding="utf-8",
+    )
+    return [s for s in universe if s not in excludes]
+
 
 def refresh_all_data(cfg: dict) -> None:
     from data.kite_ohlcv import backfill_ohlcv, backfill_india_vix
     from data.nse_scraper import backfill_participant_oi, backfill_delivery_data
     from data.trendlyne_scraper import fetch_cash_fii_dii_history
 
-    watchlist = cfg["watchlist"]
+    symbols = get_scan_symbols(cfg, require_live=True)
     bootstrap_days = cfg["detection"].get("ohlcv_bootstrap_days", 400)
 
-    log.info("=== Refreshing OHLCV (Kite, per-symbol backfill) ===")
-    for symbol in watchlist:
+    log.info(f"=== Refreshing OHLCV for {len(symbols)} F&O universe symbols (Kite, per-symbol backfill) ===")
+    t0 = time.time()
+    for i, symbol in enumerate(symbols, 1):
         try:
             result = backfill_ohlcv(symbol, bootstrap_days=bootstrap_days)
             if not result.empty:
                 db.upsert_ohlcv(result)
-                log.info(f"{symbol}: +{len(result)} OHLCV rows")
+                log.info(f"[{i}/{len(symbols)}] {symbol}: +{len(result)} OHLCV rows")
+            elif i % 20 == 0 or i == len(symbols):
+                log.info(f"[{i}/{len(symbols)}] ... {time.time() - t0:.0f}s elapsed")
         except Exception as e:
-            log.error(f"{symbol}: OHLCV backfill failed -- {e}")
+            log.error(f"[{i}/{len(symbols)}] {symbol}: OHLCV backfill failed -- {e}")
+    log.info(f"OHLCV refresh done: {len(symbols)} symbols in {time.time() - t0:.0f}s")
 
     log.info("=== Refreshing India VIX (Kite, backfill) ===")
     try:
@@ -166,30 +204,40 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
 
 
 def run_scan(cfg: dict) -> None:
-    watchlist = cfg["watchlist"]
+    symbols = get_scan_symbols(cfg, require_live=False)
     min_bars = cfg["detection"].get("stage_min_bars", 210)
 
-    for symbol in watchlist:
+    log.info(f"=== Scanning {len(symbols)} F&O universe symbols ===")
+    t0 = time.time()
+    skipped_no_history = 0
+    for i, symbol in enumerate(symbols, 1):
         try:
             df = db.get_ohlcv(symbol)
             if len(df) < min_bars:
-                log.warning(f"{symbol}: only {len(df)} OHLCV bars (< {min_bars} needed) -- skipping")
+                skipped_no_history += 1
+                if skipped_no_history <= 5 or i == len(symbols):
+                    log.warning(f"[{i}/{len(symbols)}] {symbol}: only {len(df)} OHLCV bars (< {min_bars} needed) -- skipping")
                 continue
 
             fund = apply_fundamental_filter(symbol)
             if not fund.eligible:
-                log.info(f"{symbol}: excluded by fundamentals filter -- {fund.notes}")
+                log.info(f"[{i}/{len(symbols)}] {symbol}: excluded by fundamentals filter -- {fund.notes}")
                 continue
 
             scan_date = df["date"].max()
             for direction in ("bullish", "bearish"):
                 _scan_one_direction(symbol, df, direction, cfg, scan_date)
 
+            if i % 20 == 0:
+                log.info(f"[{i}/{len(symbols)}] ... {time.time() - t0:.0f}s elapsed")
+
         except Exception as e:
-            log.error(f"{symbol}: scan failed -- {e}", exc_info=True)
+            log.error(f"[{i}/{len(symbols)}] {symbol}: scan failed -- {e}", exc_info=True)
             continue
 
-    log.info("Scan complete.")
+    if skipped_no_history > 5:
+        log.warning(f"{skipped_no_history} symbols total skipped for insufficient OHLCV history -- run refresh_data.py to backfill them")
+    log.info(f"Scan complete: {len(symbols)} symbols in {time.time() - t0:.0f}s")
 
 
 if __name__ == "__main__":

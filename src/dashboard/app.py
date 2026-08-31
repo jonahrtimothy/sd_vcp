@@ -112,10 +112,19 @@ def page_daily_scan(cfg: dict):
     n_high = (scan_df["conviction"] == "High").sum()
     n_medium = (scan_df["conviction"] == "Medium").sum()
     n_low = (scan_df["conviction"] == "Low").sum()
-    n_watchlist = len(cfg["watchlist"])
+
+    universe_size = "?"
+    try:
+        from scanner import UNIVERSE_CACHE_PATH
+        import json as _json
+        if UNIVERSE_CACHE_PATH.exists():
+            cached = _json.loads(UNIVERSE_CACHE_PATH.read_text(encoding="utf-8"))
+            universe_size = len(cached["universe"]) - len(cfg.get("watchlist", []))
+    except Exception:
+        pass
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Watchlist size", n_watchlist)
+    m1.metric("Scanned universe", universe_size)
     m2.metric("🟢 High conviction", int(n_high))
     m3.metric("🟡 Medium conviction", int(n_medium))
     m4.metric("🔴 Low conviction", int(n_low))
@@ -153,7 +162,9 @@ def page_daily_scan(cfg: dict):
 def page_symbol_detail(cfg: dict):
     st.title("🔍 Symbol Detail")
 
-    # selectable symbols = watchlist ∪ anything that already has OHLCV history saved
+    # selectable symbols = anything that already has OHLCV history saved
+    # (Step 15.2: no more hand-picked watchlist to union in -- the universe
+    # is the full F&O list now, so "has data" is the only relevant filter)
     conn_symbols = []
     try:
         import sqlite3
@@ -162,7 +173,7 @@ def page_symbol_detail(cfg: dict):
         conn.close()
     except Exception:
         pass
-    options = sorted(set(cfg["watchlist"]) | set(conn_symbols))
+    options = sorted(conn_symbols)
     if not options:
         st.info("No symbols with OHLCV data yet. Run refresh_data.py first.")
         return
@@ -289,35 +300,58 @@ def page_symbol_detail(cfg: dict):
 
 
 def page_watchlist(cfg: dict):
-    st.title("📋 Watchlist Management")
-    st.caption("Edits here rewrite the `watchlist:` block in config.yaml directly (comments elsewhere in the file are preserved).")
+    st.title("🚫 Excluded Symbols")
+    st.caption(
+        "Since Step 15.2, the scanned universe is the full NSE F&O-eligible list "
+        "(~210 stocks, sourced live from Kite -- self-updating as NSE adds/removes "
+        "names), not a hand-picked watchlist. This page is now an EXCLUDE list: "
+        "symbols to skip even though they're F&O-eligible. Edits rewrite the "
+        "`watchlist:` block in config.yaml directly (comments elsewhere preserved)."
+    )
 
-    current = cfg["watchlist"]
-    st.write(f"Currently tracking **{len(current)}** symbols.")
+    excluded = cfg["watchlist"]
+
+    try:
+        from scanner import UNIVERSE_CACHE_PATH
+        import json as _json
+        if UNIVERSE_CACHE_PATH.exists():
+            cached = _json.loads(UNIVERSE_CACHE_PATH.read_text(encoding="utf-8"))
+            universe_size = len(cached["universe"])
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Full F&O universe", universe_size)
+            m2.metric("Excluded", len(excluded))
+            m3.metric("Currently scanning", universe_size - len([s for s in excluded if s in cached["universe"]]))
+        else:
+            st.info("F&O universe not fetched yet -- run `refresh_data.py` once to populate it.")
+    except Exception:
+        pass
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Add a symbol")
+        st.subheader("Add an exclusion")
         new_symbol = st.text_input("NSE trading symbol (e.g. RELIANCE)").strip().upper()
-        if st.button("Add") and new_symbol:
-            if new_symbol in current:
-                st.warning(f"{new_symbol} is already in the watchlist.")
+        if st.button("Exclude") and new_symbol:
+            if new_symbol in excluded:
+                st.warning(f"{new_symbol} is already excluded.")
             else:
-                update_watchlist(current + [new_symbol])
-                st.success(f"Added {new_symbol}. Reloading...")
+                update_watchlist(excluded + [new_symbol])
+                st.success(f"Excluded {new_symbol}. Reloading...")
                 st.rerun()
 
     with col2:
-        st.subheader("Remove a symbol")
-        to_remove = st.selectbox("Symbol", [""] + current)
-        if st.button("Remove") and to_remove:
-            update_watchlist([s for s in current if s != to_remove])
-            st.success(f"Removed {to_remove}. Reloading...")
+        st.subheader("Remove an exclusion")
+        to_remove = st.selectbox("Symbol", [""] + excluded)
+        if st.button("Un-exclude") and to_remove:
+            update_watchlist([s for s in excluded if s != to_remove])
+            st.success(f"{to_remove} will be scanned again. Reloading...")
             st.rerun()
 
     st.divider()
-    st.subheader("Current watchlist")
-    st.dataframe(pd.DataFrame({"symbol": current}), use_container_width=True, hide_index=True)
+    st.subheader("Currently excluded")
+    if excluded:
+        st.dataframe(pd.DataFrame({"symbol": excluded}), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Nothing excluded -- the full F&O universe is being scanned.")
 
     st.divider()
     st.subheader("⚙️ Confluence settings")
@@ -532,7 +566,7 @@ def main():
     st.sidebar.caption("India-first supply/demand + VCP swing research tool. Analytical output only -- never a buy/sell instruction.")
     nav = st.sidebar.radio(
         "Navigate",
-        ["Daily Scan", "Symbol Detail", "Position Calculator", "Watchlist Management", "Scan History"],
+        ["Daily Scan", "Symbol Detail", "Position Calculator", "Excluded Symbols", "Scan History"],
         key="nav",
     )
 
@@ -542,7 +576,7 @@ def main():
         page_calculator(cfg)
     elif nav == "Symbol Detail":
         page_symbol_detail(cfg)
-    elif nav == "Watchlist Management":
+    elif nav == "Excluded Symbols":
         page_watchlist(cfg)
     elif nav == "Scan History":
         page_scan_history()

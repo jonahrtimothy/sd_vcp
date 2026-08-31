@@ -3,52 +3,19 @@
 # (SYSTEM_BUILD_PROMPT.md Section 15). Edit this file directly, or (once
 # built) via the dashboard's Watchlist Management page.
 
-# ~30-40 liquid, F&O-eligible NSE names spread across sectors, as a starting
-# default (Section 6: "a curated 30-50 liquid stocks that have an active
-# futures segment"). This is a LIQUIDITY/ELIGIBILITY filter only -- futures
-# are traded, options are not, per the strategy prompt's instrument scope.
-# Edit freely; nothing else in the code depends on this exact list.
-watchlist:
-  - RELIANCE
-  - TCS
-  - HDFCBANK
-  - ICICIBANK
-  - INFY
-  - SBIN
-  - BHARTIARTL
-  - ITC
-  - LT
-  - KOTAKBANK
-  - AXISBANK
-  - HINDUNILVR
-  - BAJFINANCE
-  - MARUTI
-  - SUNPHARMA
-  - TITAN
-  - ULTRACEMCO
-  - ASIANPAINT
-  - NESTLEIND
-  - WIPRO
-  - ADANIENT
-  - ADANIPORTS
-  - TATAMOTORS
-  - TATASTEEL
-  - JSWSTEEL
-  - NTPC
-  - POWERGRID
-  - ONGC
-  - COALINDIA
-  - M&M
-  - BAJAJFINSV
-  - HCLTECH
-  - DRREDDY
-  - CIPLA
-  - GRASIM
-  - BRITANNIA
-  - EICHERMOT
-  - HEROMOTOCO
-  - TECHM
-  - INDUSINDBK
+# REPURPOSED Sep 1 2026 (Step 15.2): this list used to BE the scanned
+# universe (a hand-picked 40 names). Since the universe is now sourced
+# live from Kite's own F&O instruments master (get_fno_universe(), ~210
+# stocks and growing/self-updating), this list is now an EXCLUDE list
+# instead -- symbols to skip even though they're F&O-eligible (e.g.
+# something illiquid, or one you just don't want cluttering the scan).
+# scanner.py operates on get_fno_universe() minus whatever's listed here.
+# This was a default picked by Claude Code (per the Step 15 handoff doc's
+# own recommendation), not silently assumed -- see PROJECT_CONTEXT.md.
+# Cleared to empty on this transition, since keeping the old 40-name
+# INCLUDE list here would have flipped to EXCLUDING exactly those stocks.
+# Managed via the dashboard's "Excluded Symbols" page, or edit directly:
+watchlist: []
 
 detection:
   zone_lookback: 3

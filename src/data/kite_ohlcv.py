@@ -76,6 +76,43 @@ def get_instrument_token(symbol: str, exchange: str = "NSE", segment: str | None
     return token
 
 
+def get_fno_universe() -> list[str]:
+    """
+    Full NSE F&O-eligible STOCK universe, sourced live from Kite's own
+    instruments master (Step 15.2) -- self-updating as NSE adds/removes
+    names, rather than a hand-maintained watchlist.
+
+    Index futures (NIFTY, BANKNIFTY, FINNIFTY, etc.) are filtered out --
+    indexes are deliberately out of MVP scope (Option A, Aug 31 2026
+    decision with Jonah). The discriminator: a real stock underlying also
+    has a cash-equity listing on NSE; an index never does (confirmed
+    against real data -- NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY all have F&O
+    futures but zero matching NSE cash-equity tradingsymbol).
+    """
+    kite = get_authenticated_kite()
+    nfo = pd.DataFrame(kite.instruments("NFO"))
+    fut_underlyings = set(nfo[nfo["instrument_type"] == "FUT"]["name"].unique())
+
+    refresh_needed = True
+    if INSTRUMENTS_CACHE.exists():
+        cache_age_hours = (
+            datetime.now().timestamp() - INSTRUMENTS_CACHE.stat().st_mtime
+        ) / 3600
+        refresh_needed = cache_age_hours > 24
+    if refresh_needed:
+        nse_df = pd.DataFrame(kite.instruments("NSE"))
+        INSTRUMENTS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        nse_df.to_csv(INSTRUMENTS_CACHE, index=False)
+    else:
+        nse_df = pd.read_csv(INSTRUMENTS_CACHE)
+    equity_symbols = set(nse_df[nse_df["segment"] == "NSE"]["tradingsymbol"])
+
+    universe = sorted(fut_underlyings & equity_symbols)
+    filtered_out = len(fut_underlyings) - len(universe)
+    print(f"F&O universe: {len(universe)} stocks ({filtered_out} non-equity FUT underlyings filtered out, e.g. indices)")
+    return universe
+
+
 def get_lot_size(symbol: str) -> int | None:
     """
     Real stock-futures lot size for `symbol`, from Kite's NFO (F&O)
