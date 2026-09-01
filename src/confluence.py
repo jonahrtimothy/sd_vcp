@@ -22,7 +22,7 @@ import pandas as pd
 import db
 from config import load_config
 from sector_mapping import get_sector_index
-from stage import StageResult, classify_stage
+from stage import StageResult, classify_stage, RS_RATING_BULLISH_MIN, RS_RATING_BEARISH_MAX
 from vcp import VCPSetup, count_bases_since_stage2
 from zones import Zone
 
@@ -55,6 +55,7 @@ BONUS_NIFTY_ALIGNMENT = _cfg.get("bonus_nifty_alignment", 6.0)
 SECTOR_RS_LOOKBACK_DAYS = _cfg.get("sector_rs_lookback_days", 20)
 SECTOR_RS_THRESHOLD_PP = _cfg.get("sector_rs_threshold_pp", 2.0)
 BONUS_SECTOR_RS = _cfg.get("bonus_sector_rs", 6.0)
+BONUS_RS_RATING = _cfg.get("bonus_rs_rating", 6.0)
 
 NIFTY_SYMBOL = "NIFTY 50"
 
@@ -80,6 +81,7 @@ class ConfluenceResult:
     delivery_bonus: float
     nifty_alignment_bonus: float
     sector_rs_bonus: float
+    rs_rating_bonus: float
     weighted_score: float
     conviction: Conviction
     notes: str
@@ -95,7 +97,7 @@ class ConfluenceResult:
             f"raw_vcp={self.raw_vcp_score:.0f} zone={self.zone_bonus:+.0f} "
             f"fii_dii={self.fii_dii_bonus:+.0f} oi={self.oi_buildup_bonus:+.0f} "
             f"delivery={self.delivery_bonus:+.0f} nifty={self.nifty_alignment_bonus:+.0f} "
-            f"sector_rs={self.sector_rs_bonus:+.0f} "
+            f"sector_rs={self.sector_rs_bonus:+.0f} rs_rating={self.rs_rating_bonus:+.0f} "
             f"-> weighted={self.weighted_score:.1f} | "
             f"CONVICTION: {self.conviction} | {self.notes}"
         )
@@ -354,6 +356,43 @@ def _sector_strength_signal(direction: str, symbol: Optional[str], as_of_date: s
     return -BONUS_SECTOR_RS, f"{label} - {rs_state} sector conflicts with {direction} setup"
 
 
+def _rs_rating_signal(direction: str, symbol: Optional[str]) -> tuple:
+    """Step 15.6: wires rs_rating.py's (Step 15.3) cross-symbol percentile
+    rating in as a bonus/penalty signal, same "insufficient data reports
+    honestly, never guesses" pattern as the other Section 7 signals above.
+    Same >=70/<=30 thresholds as stage.py's Trend Template item 8, reused
+    directly (not redefined) to avoid the two drifting apart. Config-gated
+    via rs_rating.enabled, same toggle pattern as sector_strength_enabled,
+    in case Jonah wants to disable it while the RS Rating formula (still
+    an approximation of the real IBD metric) is being calibrated."""
+    if not load_config().get("rs_rating", {}).get("enabled", True):
+        return 0.0, "RS Rating check disabled (config)"
+
+    if not symbol:
+        return 0.0, "no symbol provided, RS Rating skipped"
+
+    fund = db.get_fundamentals(symbol)
+    rs = fund.get("rs_rating") if fund else None
+    if rs is None:
+        return 0.0, f"no RS Rating computed yet for {symbol} -- insufficient history, or not yet scanned this run"
+
+    label = f"{symbol} RS Rating {rs}"
+    strong = rs >= RS_RATING_BULLISH_MIN
+    weak = rs <= RS_RATING_BEARISH_MAX
+
+    if direction == "bullish":
+        if strong:
+            return BONUS_RS_RATING, f"{label} - strong relative strength (>={RS_RATING_BULLISH_MIN}), aligned with bullish setup"
+        if weak:
+            return -BONUS_RS_RATING, f"{label} - weak relative strength (<={RS_RATING_BEARISH_MAX}), conflicts with bullish setup"
+    else:
+        if weak:
+            return BONUS_RS_RATING, f"{label} - weak relative strength (<={RS_RATING_BEARISH_MAX}), aligned with bearish setup"
+        if strong:
+            return -BONUS_RS_RATING, f"{label} - strong relative strength (>={RS_RATING_BULLISH_MIN}), conflicts with bearish setup"
+    return 0.0, f"{label} - moderate, no clear relative-strength edge"
+
+
 def _base_staging_multiplier(direction: str, ohlcv_df: Optional[pd.DataFrame]) -> tuple:
     """Step 15.5: applies alongside the Stage alignment multiplier above --
     NOT a separate additive score, per the handoff's own instruction ("wire
@@ -408,13 +447,14 @@ def compute_confluence(
     delivery_bonus, delivery_note = _delivery_trend_signal(symbol, as_of_date)
     nifty_bonus, nifty_note = _nifty_alignment_signal(direction, as_of_date)
     sector_rs_bonus, sector_rs_note = _sector_strength_signal(direction, symbol, as_of_date)
+    rs_rating_bonus, rs_rating_note = _rs_rating_signal(direction, symbol)
     base_multiplier, base_note, base_count = _base_staging_multiplier(direction, ohlcv_df)
-    data_notes = [fii_dii_note, oi_note, delivery_note, nifty_note, sector_rs_note, base_note]
+    data_notes = [fii_dii_note, oi_note, delivery_note, nifty_note, sector_rs_note, rs_rating_note, base_note]
 
     weighted = (
         raw_score * multiplier * base_multiplier + zone_bonus
         + fii_dii_bonus + oi_bonus + delivery_bonus
-        + nifty_bonus + sector_rs_bonus
+        + nifty_bonus + sector_rs_bonus + rs_rating_bonus
     )
     weighted = max(0.0, min(100.0, weighted))
 
@@ -447,6 +487,7 @@ def compute_confluence(
         delivery_bonus=delivery_bonus,
         nifty_alignment_bonus=nifty_bonus,
         sector_rs_bonus=sector_rs_bonus,
+        rs_rating_bonus=rs_rating_bonus,
         weighted_score=round(weighted, 1),
         conviction=conviction,
         notes=notes,

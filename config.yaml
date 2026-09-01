@@ -56,6 +56,12 @@ confluence:
   sector_rs_lookback_days: 20
   sector_rs_threshold_pp: 2.0
   bonus_sector_rs: 6.0
+  # RS Rating (Step 15.6, Sep 1 2026) -- >=70 aligned with a bullish setup,
+  # <=30 aligned with a bearish one, same thresholds as stage.py's Trend
+  # Template item 8. Toggled on/off via rs_rating.enabled below in case
+  # Jonah wants to disable it while the RS Rating formula (15.3, still an
+  # approximation of the real IBD metric) is being calibrated.
+  bonus_rs_rating: 6.0
 
 fundamentals:
   # screener.in data doesn't change day to day -- cache and only re-scrape
@@ -87,6 +93,10 @@ rs_rating:
   # Must sum to 1.0. The commonly-cited public approximation of IBD's
   # methodology: heaviest weight on the most recent ~63 trading days.
   quarter_weights: [0.4, 0.2, 0.2, 0.2]
+  # on/off switch for wiring RS Rating into confluence.py's weighted score
+  # (Step 15.6) -- exposed as a checkbox on the dashboard (Excluded
+  # Symbols page), same pattern as fundamentals.sector_strength_enabled.
+  enabled: true
 
 # VCP base staging -- Step 15.4/15.5 (Sep 1 2026 addition, Section 4/7).
 # Counts how many distinct qualifying VCP bases a symbol has printed since

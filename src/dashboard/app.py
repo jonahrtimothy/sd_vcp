@@ -297,9 +297,10 @@ def page_symbol_detail(cfg: dict):
                 c1.metric("FII/DII", f"{confluence.fii_dii_bonus:+.0f}")
                 c2.metric("OI buildup", f"{confluence.oi_buildup_bonus:+.0f}")
                 c3.metric("Delivery%", f"{confluence.delivery_bonus:+.0f}")
-                c4, c5 = st.columns(2)
+                c4, c5, c6 = st.columns(3)
                 c4.metric("Nifty alignment", f"{confluence.nifty_alignment_bonus:+.0f}")
                 c5.metric("Sector RS", f"{confluence.sector_rs_bonus:+.0f}")
+                c6.metric("RS Rating", f"{confluence.rs_rating_bonus:+.0f}")
 
         fund_row = db.get_fundamentals(symbol)
         st.markdown("**Fundamentals (Section 5)**")
@@ -418,6 +419,27 @@ def page_watchlist(cfg: dict):
         from config import set_sector_strength_enabled
         set_sector_strength_enabled(new_val)
         st.success(f"Sector relative strength scoring turned {'ON' if new_val else 'OFF'}.")
+        st.rerun()
+
+    rs_enabled = cfg.get("rs_rating", {}).get("enabled", True)
+    new_rs_val = st.checkbox(
+        "Include RS Rating in confluence scoring",
+        value=rs_enabled,
+        help=(
+            "Step 15.6: RS Rating (Step 15.3, an approximation of IBD's "
+            "proprietary metric -- see src/rs_rating.py) as a confluence "
+            "signal. On by default, but kept toggleable in case the RS "
+            "Rating formula itself is still being calibrated and you'd "
+            "rather it not affect scores yet. Turning it off makes this "
+            "input contribute 0 to every score (not hidden, just not "
+            "scored) -- takes effect on the next scan/calculation, no "
+            "restart needed."
+        ),
+    )
+    if new_rs_val != rs_enabled:
+        from config import set_rs_rating_enabled
+        set_rs_rating_enabled(new_rs_val)
+        st.success(f"RS Rating scoring turned {'ON' if new_rs_val else 'OFF'}.")
         st.rerun()
 
 

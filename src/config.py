@@ -82,6 +82,30 @@ def set_sector_strength_enabled(enabled: bool) -> None:
     _cached_config = None
 
 
+def set_rs_rating_enabled(enabled: bool) -> None:
+    """
+    Flips `rs_rating.enabled` in config.yaml -- same targeted-replacement
+    approach as set_sector_strength_enabled(), backing the dashboard's
+    on/off checkbox for the Step 15.6 RS Rating confluence input. Scoped
+    to the `rs_rating:` section specifically (rather than the first bare
+    `enabled:` anywhere in the file) via a lazy match from the section
+    header down to its own `enabled:` line.
+    """
+    import re
+
+    text = CONFIG_PATH.read_text(encoding="utf-8")
+    value = "true" if enabled else "false"
+    pattern = re.compile(r"(rs_rating:\n(?:.*\n)*?\s*)enabled:\s*\S+", re.MULTILINE)
+    if not pattern.search(text):
+        raise ValueError("Could not find `rs_rating.enabled:` in config.yaml to replace.")
+
+    new_text = pattern.sub(rf"\g<1>enabled: {value}", text, count=1)
+    CONFIG_PATH.write_text(new_text, encoding="utf-8")
+
+    global _cached_config
+    _cached_config = None
+
+
 if __name__ == "__main__":
     cfg = load_config()
     print(f"Loaded config.yaml from: {CONFIG_PATH}")
