@@ -219,7 +219,7 @@ def page_symbol_detail(cfg: dict):
         elif stage_result is None:
             st.info("Stage classification unavailable (insufficient history) -- confluence verdict withheld.")
         else:
-            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max())
+            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max(), ohlcv_df=df)
 
             if setup.status == "failed":
                 st.error(
@@ -251,7 +251,10 @@ def page_symbol_detail(cfg: dict):
                     f"Minervini's own 'broken leader' caution: don't treat a stock as recovered just "
                     f"because its moving averages turned up, if it's still far from its highs and weak vs. the market."
                 )
-            st.markdown(f"**2. VCP:** {len(setup.contractions)} contractions, ratio_ok={setup.contraction_ratio_ok}, vol_decay_ok={setup.volume_decay_ok}, quality_score={setup.quality_score:.0f}")
+            base_suffix = ""
+            if confluence and confluence.base_count is not None:
+                base_suffix = f" | base #{confluence.base_count} since last Stage 1->2 (x{confluence.base_multiplier} confidence)"
+            st.markdown(f"**2. VCP:** {len(setup.contractions)} contractions, ratio_ok={setup.contraction_ratio_ok}, vol_decay_ok={setup.volume_decay_ok}, quality_score={setup.quality_score:.0f}{base_suffix}")
             st.markdown(
                 f"**3. Entry trigger:** {'Close above' if direction == 'bullish' else 'Close below'} "
                 f"**{setup.trigger_level:.2f}** on volume expansion (>= config threshold) "
@@ -288,7 +291,7 @@ def page_symbol_detail(cfg: dict):
     with col_right:
         st.subheader("Confluence data")
         if setup is not None and stage_result is not None:
-            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max())
+            confluence = compute_confluence(stage_result, display_zones, setup, symbol=symbol, as_of_date=df["date"].max(), ohlcv_df=df)
             if confluence:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("FII/DII", f"{confluence.fii_dii_bonus:+.0f}")

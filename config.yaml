@@ -88,6 +88,29 @@ rs_rating:
   # methodology: heaviest weight on the most recent ~63 trading days.
   quarter_weights: [0.4, 0.2, 0.2, 0.2]
 
+# VCP base staging -- Step 15.4/15.5 (Sep 1 2026 addition, Section 4/7).
+# Counts how many distinct qualifying VCP bases a symbol has printed since
+# its most recent Stage 1->2 transition (Minervini's "which base are we
+# on" confidence discount -- a 4th-stage base breaking out is statistically
+# much less reliable than a 1st or 2nd). Bullish/Stage 2 only -- this is a
+# Stage-2-uptrend concept in the original methodology, not defined for
+# Stage 4 declines (see vcp.py's count_bases_since_stage2() docstring).
+base_staging:
+  # how often (in trading days) to re-run classify_stage() while walking
+  # back through history to find the last Stage 1->2 transition. Base
+  # durations are measured in weeks, so day-level precision isn't needed --
+  # this trades a small amount of transition-date precision for a real
+  # (~5x) reduction in the classify_stage() calls a full-universe scan
+  # has to make.
+  stage_sample_stride_days: 5
+  # confidence multiplier applied alongside the existing Stage alignment
+  # multiplier in confluence.py -- 1st base full weight, 2nd a slight
+  # discount, 3rd+ a meaningful discount, per the Step 15 handoff's own
+  # wording.
+  base_multiplier_1st: 1.0
+  base_multiplier_2nd: 0.85
+  base_multiplier_3plus: 0.6
+
 data:
   broker: kite_connect
   db_path: data/studio.db

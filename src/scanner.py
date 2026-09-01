@@ -178,7 +178,7 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
     all_zones = [vcp_zone] + zones
 
     stage_result = classify_stage(df)
-    confluence = compute_confluence(stage_result, all_zones, setup, symbol=symbol, as_of_date=scan_date)
+    confluence = compute_confluence(stage_result, all_zones, setup, symbol=symbol, as_of_date=scan_date, ohlcv_df=df)
     if confluence is None:
         return
 

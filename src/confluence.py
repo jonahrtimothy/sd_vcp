@@ -23,7 +23,7 @@ import db
 from config import load_config
 from sector_mapping import get_sector_index
 from stage import StageResult, classify_stage
-from vcp import VCPSetup
+from vcp import VCPSetup, count_bases_since_stage2
 from zones import Zone
 
 Alignment = Literal["aligned", "neutral", "conflicting", "unknown"]
@@ -58,6 +58,14 @@ BONUS_SECTOR_RS = _cfg.get("bonus_sector_rs", 6.0)
 
 NIFTY_SYMBOL = "NIFTY 50"
 
+# Step 15.5: VCP base-count confidence multiplier -- a top-level config
+# section (not under `confluence:`) since it's shared with vcp.py's own
+# count_bases_since_stage2().
+_base_cfg = load_config().get("base_staging", {})
+BASE_MULTIPLIER_1ST = _base_cfg.get("base_multiplier_1st", 1.0)
+BASE_MULTIPLIER_2ND = _base_cfg.get("base_multiplier_2nd", 0.85)
+BASE_MULTIPLIER_3PLUS = _base_cfg.get("base_multiplier_3plus", 0.6)
+
 
 @dataclass
 class ConfluenceResult:
@@ -76,11 +84,14 @@ class ConfluenceResult:
     conviction: Conviction
     notes: str
     data_notes: List[str] = field(default_factory=list)
+    base_count: Optional[int] = None
+    base_multiplier: float = 1.0
 
     def summary(self) -> str:
         header = (
             f"{self.direction.upper()} setup | Stage={self.stage} "
             f"alignment={self.alignment} (x{self.multiplier}) | "
+            f"base={self.base_count if self.base_count is not None else '?'} (x{self.base_multiplier}) | "
             f"raw_vcp={self.raw_vcp_score:.0f} zone={self.zone_bonus:+.0f} "
             f"fii_dii={self.fii_dii_bonus:+.0f} oi={self.oi_buildup_bonus:+.0f} "
             f"delivery={self.delivery_bonus:+.0f} nifty={self.nifty_alignment_bonus:+.0f} "
@@ -343,12 +354,42 @@ def _sector_strength_signal(direction: str, symbol: Optional[str], as_of_date: s
     return -BONUS_SECTOR_RS, f"{label} - {rs_state} sector conflicts with {direction} setup"
 
 
+def _base_staging_multiplier(direction: str, ohlcv_df: Optional[pd.DataFrame]) -> tuple:
+    """Step 15.5: applies alongside the Stage alignment multiplier above --
+    NOT a separate additive score, per the handoff's own instruction ("wire
+    the resulting base number into the existing Stage-conflict discount
+    pattern... as an additional multiplier"). Bullish/Stage 2 only -- see
+    vcp.py's count_bases_since_stage2() docstring for why bearish/Stage 4
+    reports not_applicable rather than a fabricated mirror."""
+    if direction != "bullish":
+        return 1.0, "base staging not defined for bearish/Stage 4 setups (Stage-2-uptrend concept)", None
+    if ohlcv_df is None or ohlcv_df.empty:
+        return 1.0, "no OHLCV provided, base staging not computed", None
+
+    cfg = load_config()
+    result = count_bases_since_stage2(ohlcv_df, cfg)
+    if result["base_count"] is None:
+        return 1.0, f"base count unavailable -- {result['reason']}", None
+
+    base_count = result["base_count"]
+    notation = result["bases"][-1]["notation"] if result["bases"] else ""
+    if base_count <= 1:
+        mult = BASE_MULTIPLIER_1ST
+    elif base_count == 2:
+        mult = BASE_MULTIPLIER_2ND
+    else:
+        mult = BASE_MULTIPLIER_3PLUS
+    note = f"base #{base_count} since last Stage 1->2 transition ({notation}) -- confidence x{mult}"
+    return mult, note, base_count
+
+
 def compute_confluence(
     stage_result: StageResult,
     zones: List[Zone],
     vcp_setup: Optional[VCPSetup],
     symbol: Optional[str] = None,
     as_of_date: Optional[str] = None,
+    ohlcv_df: Optional[pd.DataFrame] = None,
 ) -> Optional[ConfluenceResult]:
     if vcp_setup is None:
         return None
@@ -367,10 +408,11 @@ def compute_confluence(
     delivery_bonus, delivery_note = _delivery_trend_signal(symbol, as_of_date)
     nifty_bonus, nifty_note = _nifty_alignment_signal(direction, as_of_date)
     sector_rs_bonus, sector_rs_note = _sector_strength_signal(direction, symbol, as_of_date)
-    data_notes = [fii_dii_note, oi_note, delivery_note, nifty_note, sector_rs_note]
+    base_multiplier, base_note, base_count = _base_staging_multiplier(direction, ohlcv_df)
+    data_notes = [fii_dii_note, oi_note, delivery_note, nifty_note, sector_rs_note, base_note]
 
     weighted = (
-        raw_score * multiplier + zone_bonus
+        raw_score * multiplier * base_multiplier + zone_bonus
         + fii_dii_bonus + oi_bonus + delivery_bonus
         + nifty_bonus + sector_rs_bonus
     )
@@ -409,4 +451,6 @@ def compute_confluence(
         conviction=conviction,
         notes=notes,
         data_notes=data_notes,
+        base_count=base_count,
+        base_multiplier=base_multiplier,
     )
