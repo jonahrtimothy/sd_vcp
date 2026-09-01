@@ -121,6 +121,23 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     earnings_quality_detail TEXT,
     fetched_at TEXT
 );
+
+-- Manual trade log (Step 15.7, Section 8/9): the ONLY record of which
+-- setups Jonah actually took, since the Position Calculator deliberately
+-- persists nothing (Step 12). Purely manual -- no broker-API sync, no
+-- automation -- entered once when a trade is taken, marked closed later.
+-- Backs the portfolio-concentration soft flag (open position count).
+CREATE TABLE IF NOT EXISTS trade_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    vehicle TEXT NOT NULL,
+    entry_date TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop REAL NOT NULL,
+    qty REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    closed_date TEXT
+);
 """
 
 
@@ -654,11 +671,57 @@ def table_counts() -> dict:
     conn = get_connection()
     try:
         tables = ["ohlcv", "participant_oi", "cash_fii_dii", "delivery_pct",
-                  "india_vix", "zones", "vcp_setups", "scan_results", "fundamentals"]
+                  "india_vix", "zones", "vcp_setups", "scan_results", "fundamentals",
+                  "trade_log"]
         counts = {}
         for t in tables:
             counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         return counts
+    finally:
+        conn.close()
+
+
+def add_trade_log_entry(record: dict) -> int:
+    """record keys: symbol, vehicle, entry_date, entry_price, stop, qty.
+    Manual entry only (Step 15.7) -- returns the new row's id."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """INSERT INTO trade_log (symbol, vehicle, entry_date, entry_price, stop, qty, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'open')""",
+            (
+                record["symbol"], record["vehicle"], record["entry_date"],
+                float(record["entry_price"]), float(record["stop"]), float(record["qty"]),
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_trade_log(status: str | None = None) -> pd.DataFrame:
+    """status='open'/'closed' to filter, or None for the full log."""
+    conn = get_connection()
+    try:
+        if status:
+            return pd.read_sql(
+                "SELECT * FROM trade_log WHERE status = ? ORDER BY entry_date DESC, id DESC",
+                conn, params=(status,),
+            )
+        return pd.read_sql("SELECT * FROM trade_log ORDER BY entry_date DESC, id DESC", conn)
+    finally:
+        conn.close()
+
+
+def close_trade(trade_id: int, closed_date: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE trade_log SET status = 'closed', closed_date = ? WHERE id = ?",
+            (closed_date, trade_id),
+        )
+        conn.commit()
     finally:
         conn.close()
 

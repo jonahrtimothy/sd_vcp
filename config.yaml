@@ -121,6 +121,21 @@ base_staging:
   base_multiplier_2nd: 0.85
   base_multiplier_3plus: 0.6
 
+# Risk framework -- Step 15.7 (Sep 1 2026 addition, Section 8/9). R:R floor
+# and portfolio concentration are FLAG-ONLY, never a hard exclude or block
+# on opening a new position -- this system's trade execution stays manual
+# throughout; nothing here should ever prevent Jonah from acting, only
+# inform him (confirmed decision, see PROJECT_CONTEXT.md).
+risk:
+  # setups whose zone-based reward:risk falls below this get a badge, not
+  # excluded from the scan.
+  min_reward_risk_ratio: 2.0
+  # open trade-log position count in [soft_min, soft_max] gets a soft
+  # (amber) concentration warning; above soft_max, a stronger (red) one --
+  # mirrors the data-freshness panel's age-based color coding (Step 13).
+  concentration_soft_min: 4
+  concentration_soft_max: 6
+
 data:
   broker: kite_connect
   db_path: data/studio.db

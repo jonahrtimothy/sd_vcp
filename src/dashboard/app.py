@@ -28,6 +28,7 @@ from confluence import compute_confluence
 from stage import classify_stage, classify_trend_template
 from vcp import detect_vcp, check_trigger
 from zones import detect_zones, zone_from_vcp_contraction
+from risk import suggest_exit_plan, GAP_RISK_NOTE
 from charts import build_price_chart
 from style import conviction_badge, direction_badge, stage_badge, trigger_badge
 
@@ -96,6 +97,52 @@ def render_scan_table(scan_df: pd.DataFrame):
             st.rerun()
 
 
+def render_open_positions_panel(cfg: dict):
+    """Step 15.7: open position count + total open risk from the manual
+    trade log, with a soft/hard color-coded concentration flag -- mirrors
+    render_freshness_panel()'s age-based color coding (Step 13). FLAG ONLY:
+    never blocks opening a new position, matches this system's
+    "trade execution stays manual" philosophy."""
+    st.subheader("Open positions (manual trade log)")
+    open_df = db.get_trade_log(status="open")
+    risk_cfg = cfg.get("risk", {})
+    soft_min = risk_cfg.get("concentration_soft_min", 4)
+    soft_max = risk_cfg.get("concentration_soft_max", 6)
+
+    n_open = len(open_df)
+    total_open_risk = float((open_df["qty"] * (open_df["entry_price"] - open_df["stop"]).abs()).sum()) if n_open else 0.0
+
+    if n_open < soft_min:
+        color = "normal"
+    elif n_open <= soft_max:
+        color = "off"
+    else:
+        color = "inverse"
+
+    c1, c2 = st.columns(2)
+    c1.metric(
+        "Open positions", n_open,
+        delta=f"soft flag at {soft_min}-{soft_max}" if n_open >= soft_min else None,
+        delta_color=color,
+    )
+    c2.metric("Total open risk (Rs)", f"{total_open_risk:,.0f}")
+
+    if n_open:
+        with st.expander(f"{n_open} open position(s) -- click to view / close", expanded=(n_open >= soft_min)):
+            for _, row in open_df.iterrows():
+                rc1, rc2, rc3, rc4, rc5, rc6 = st.columns([1.2, 1, 1, 1, 1, 1])
+                rc1.markdown(f"**{row['symbol']}**")
+                rc2.caption(row["vehicle"])
+                rc3.caption(f"entry {row['entry_price']:.2f}")
+                rc4.caption(f"stop {row['stop']:.2f}")
+                rc5.caption(f"qty {row['qty']:.0f}")
+                if rc6.button("Close", key=f"close_trade_{row['id']}"):
+                    db.close_trade(int(row["id"]), date.today().isoformat())
+                    st.rerun()
+    else:
+        st.caption("No open positions logged. Log a trade from the Position Calculator page once you actually take one.")
+
+
 def page_daily_scan(cfg: dict):
     st.title("📊 Daily Scan")
 
@@ -128,6 +175,9 @@ def page_daily_scan(cfg: dict):
     m2.metric("🟢 High conviction", int(n_high))
     m3.metric("🟡 Medium conviction", int(n_medium))
     m4.metric("🔴 Low conviction", int(n_low))
+
+    st.divider()
+    render_open_positions_panel(cfg)
 
     st.divider()
     render_scan_table(scan_df)
@@ -262,11 +312,31 @@ def page_symbol_detail(cfg: dict):
                 unsafe_allow_html=True,
             )
             stop = vcp_zone.distal_price
+            exit_plan = suggest_exit_plan(
+                direction, float(setup.trigger_level), float(stop), display_zones,
+                min_rr=cfg.get("risk", {}).get("min_reward_risk_ratio", 2.0),
+            )
+            if exit_plan.trail_zone is not None:
+                trail_note = f" Trailing-stop reference once price advances: {exit_plan.trail_zone.proximal_price:.2f} ({exit_plan.trail_zone.kind} zone)."
+            else:
+                trail_note = ""
             st.markdown(f"**4. Stop-loss:** {stop:.2f} (the VCP-anchored zone's distal line -- final contraction's extreme wick; setup invalidated if closed beyond this)")
-            risk = abs(setup.trigger_level - stop)
-            target1 = setup.trigger_level + 2 * risk if direction == "bullish" else setup.trigger_level - 2 * risk
-            target2 = setup.trigger_level + 3 * risk if direction == "bullish" else setup.trigger_level - 3 * risk
+            if trail_note:
+                st.caption(trail_note.strip())
+            risk_amt = abs(setup.trigger_level - stop)
+            target1 = setup.trigger_level + 2 * risk_amt if direction == "bullish" else setup.trigger_level - 2 * risk_amt
+            target2 = setup.trigger_level + 3 * risk_amt if direction == "bullish" else setup.trigger_level - 3 * risk_amt
             st.markdown(f"**5. Targets:** T1 (2R) = {target1:.2f}, T2 (3R) = {target2:.2f} | illustrative R-multiples -- size to your own max-risk-per-trade rule")
+            if exit_plan.target_zone is not None:
+                rr_color = "#22c55e" if exit_plan.rr_floor_ok else "#ef4444"
+                from style import badge
+                st.markdown(
+                    f"Zone-based target: **{exit_plan.target_zone.proximal_price:.2f}** "
+                    f"({exit_plan.target_zone.kind} zone) -- {badge(exit_plan.summary(), rr_color)}",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption(f"Zone-based target: {exit_plan.summary()}")
             st.caption("Sizing sent to the calculator defaults to Futures -- switch to Cash equity there if that's the vehicle for this trade.")
             if st.button("Send to Position Calculator"):
                 st.session_state["calc_symbol"] = symbol
@@ -283,6 +353,7 @@ def page_symbol_detail(cfg: dict):
                 st.markdown(f"**6. Composite conviction:** {conviction_badge(confluence.conviction)} (weighted score {confluence.weighted_score})", unsafe_allow_html=True)
                 st.caption(confluence.notes)
             st.markdown(f"**7. Invalidation:** price closes back inside the base after the trigger, or the pattern widens instead of tightening")
+            st.caption(GAP_RISK_NOTE)
             st.markdown("**8. Data caveats:**")
             if confluence:
                 for note in confluence.data_notes:
@@ -616,6 +687,28 @@ def page_calculator(cfg: dict):
                 pnl = suggested_qty * abs(target - entry)
                 st.metric(f"{label} R:R", f"1:{rr:.1f}")
                 st.caption(f"Potential P&L at {label} (Rs{target:.2f}, full sized position): Rs{pnl:,.0f}")
+
+    st.divider()
+    st.subheader("📝 Log this trade")
+    st.caption(
+        "Step 15.7: the ONLY record of which setups you actually took vs. what the "
+        "scanner surfaced -- purely manual, no broker sync, no automation. Backs the "
+        "portfolio-concentration flag on the Daily Scan page. Logs the position size "
+        "computed above (quantity), not a separate entry."
+    )
+    entry_date = st.date_input("Entry date", value=date.today(), key="calc_log_date_w")
+    if st.button("Log this trade"):
+        if not symbol:
+            st.warning("Enter a symbol above before logging.")
+        elif risk_per_share <= 0 or suggested_qty <= 0:
+            st.warning("Enter a valid entry, stop-loss, and capital (a real suggested quantity > 0) before logging.")
+        else:
+            db.add_trade_log_entry({
+                "symbol": symbol.upper(), "vehicle": vehicle,
+                "entry_date": entry_date.isoformat(), "entry_price": entry,
+                "stop": stop, "qty": suggested_qty,
+            })
+            st.success(f"Logged: {symbol.upper()} {vehicle}, qty {suggested_qty} @ {entry:.2f}, stop {stop:.2f}. See the Daily Scan page for your open positions.")
 
 
 def main():

@@ -38,6 +38,7 @@ from fundamentals import apply_fundamental_filter
 from stage import classify_stage
 from vcp import detect_vcp, check_trigger
 from zones import detect_zones, zone_from_vcp_contraction
+from risk import suggest_exit_plan
 
 logging.basicConfig(
     level=logging.INFO,
@@ -193,7 +194,10 @@ def _scan_one_direction(symbol: str, df, direction: str, cfg: dict, scan_date: s
             if z.fresh:
                 break  # prefer a fresh matching zone if one exists
 
-    all_notes = "; ".join([confluence.notes] + confluence.data_notes)
+    min_rr = cfg.get("risk", {}).get("min_reward_risk_ratio", 2.0)
+    exit_plan = suggest_exit_plan(direction, setup.trigger_level, vcp_zone.distal_price, all_zones, min_rr=min_rr)
+
+    all_notes = "; ".join([confluence.notes] + confluence.data_notes + [exit_plan.summary()])
     db.upsert_scan_result(
         symbol=symbol, scan_date=scan_date, direction=direction,
         stage=stage_result.stage, confluence_score=confluence.weighted_score,
