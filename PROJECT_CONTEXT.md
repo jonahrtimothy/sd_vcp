@@ -237,6 +237,21 @@ scale globally later. Local project path: `C:\Jonah\sd_vcp`.
   "no transition found in available history" rather than guessing (see
   SYSTEM_BUILD_PROMPT.md Section 1's `vcp.py` entry for real validation
   numbers on this).
+- **15.7, portfolio-concentration trade log**: this was the one sub-item
+  in Step 15 the handoff doc explicitly called new scope rather than a
+  pre-decided extension, and said was "worth confirming with Jonah before
+  or during the build... rather than assuming." Asked directly (in chat,
+  before writing any code for it): base fields only (`symbol`, `vehicle`,
+  `entry_date`, `entry_price`, `stop`, `qty`, `status`, `closed_date`) --
+  no exit-price/realized-P&L columns, no notes field. Confirmed as the
+  Recommended option, matching the handoff's own suggested minimal shape.
+  Purely manual (logged from the Position Calculator page when a trade is
+  actually taken, closed later from the Daily Scan page) -- no broker-API
+  position sync, consistent with the Position Calculator's own Step 12
+  "persists nothing" design and this project's general "trade execution
+  stays manual" stance. See SYSTEM_BUILD_PROMPT.md Section 1's `db.py`
+  entry for the schema and real validation (a full log-position-close
+  lifecycle tested live on the dashboard).
 
 ## What's already built and tested (in `src/`)
 - `zones.py` — supply/demand zone detection from OHLCV. **Merge bug FIXED

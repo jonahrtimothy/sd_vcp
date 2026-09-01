@@ -159,6 +159,19 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   (RS Rating 91) -> +6.0 bullish/-6.0 bearish; RELIANCE (RS Rating 25) ->
   -6.0 bullish/+6.0 bearish -- correct both directions. A full 210-symbol
   `run_scan.py` completed clean in 163s.
+- `risk.py` (NEW, Step 15.7) — risk-framework additions: Section 8/9's
+  R:R floor, zone-based exit plan, and gap-risk disaster-plan note. ALL
+  flag/informational only, never excludes a setup or blocks an action,
+  per the "trade execution stays manual" philosophy. `suggest_exit_plan()`
+  finds the nearest FRESH opposite-kind zone beyond entry (via its
+  proximal/near edge, using the corrected 15.0 distal/proximal fields) as
+  a real zone-based profit target, and the nearest FRESH same-kind zone
+  between stop and entry as a trailing-stop reference -- reused
+  `zones.py` output, no new detection logic. Reward:risk is computed
+  against that real target rather than the pre-existing illustrative
+  2R/3R display. Validated on 134 real setups across 80 real symbols: 16
+  above the config floor, 73 below (flagged), 45 honestly "unavailable"
+  (no qualifying fresh target zone) rather than a fabricated number.
 - `db.py` — SQLite schema (8 tables) + upsert/read functions for ohlcv,
   participant_oi, cash_fii_dii, delivery_pct (india_vix, zones, vcp_setups,
   scan_results tables exist in schema, not yet populated by code). All
@@ -374,6 +387,13 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   extended to include them, still excluding `rs_rating`. Verified real:
   `rs_rating` survives an upsert carrying the new 15.4 fields for
   RELIANCE/TCS/HDFCBANK.
+  **Step 15.7 (new)**: new `trade_log` table -- the manual trade log
+  (symbol, vehicle, entry_date, entry_price, stop, qty, status,
+  closed_date; base fields only, confirmed with Jonah before building,
+  see PROJECT_CONTEXT.md) + `add_trade_log_entry()`/`get_trade_log()`/
+  `close_trade()`. Purely manual, no broker-API sync -- the only record
+  of which setups Jonah actually took, since the Position Calculator
+  deliberately persists nothing (Step 12).
 
 **Config/security**:
 - `.env` (gitignored) — holds `KITE_API_KEY`, `KITE_API_SECRET`
@@ -697,7 +717,7 @@ data:
 
 **Phase 5 — Universe scanner** ✅ DONE (Step 10): `scanner.py` orchestrates fundamentals -> zones -> VCP -> stage -> confluence across the whole watchlist, persisting to zones/vcp_setups/scan_results; `scripts/refresh_data.py` + `scripts/run_scan.py` are the daily-use entrypoints. Validated end-to-end on real data (RELIANCE correctly excluded by the new fundamentals filter; HDFCBANK produced two distinct real bullish/bearish verdicts).
 
-**Phase 6 — Studio dashboard** ✅ DONE (Step 10, extended Step 12): 5 pages now (Daily Scan, Symbol Detail, Position Calculator, Watchlist Management, Scan History) in `src/dashboard/app.py`, validated by actually running `streamlit run` and driving it in a real browser against the real DB (see Section 1 above for detail).
+**Phase 6 — Studio dashboard** ✅ DONE (Step 10, extended Step 12, 15.7): 5 pages (Daily Scan, Symbol Detail, Position Calculator, Excluded Symbols, Scan History) in `src/dashboard/app.py`, validated by actually running `streamlit run` and driving it in a real browser against the real DB (see Section 1 above for detail). Step 15.7 additions: Daily Scan gained an "Open positions" panel (manual trade-log count + total open risk, soft/hard color-coded concentration flag at 4-6 positions); Position Calculator gained a "Log this trade" button; Symbol Detail gained the zone-based exit-plan target/R:R badge and the gap-risk note.
 
 **Phase 7 — Backtest harness** ❌ NOT STARTED (correctly deferred — not needed yet).
 
@@ -711,7 +731,7 @@ data:
 - **15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags** ✅ DONE, see Section 1 above (`screener_scraper.py`, `db.py`, `fundamentals.py`).
 - **15.5 — VCP base staging + (Time)(Depth)(Ticks) notation** ✅ DONE, see Section 1 above (`vcp.py`'s `count_bases_since_stage2()`, `confluence.py`'s base multiplier).
 - **15.6 — Confluence: wire in RS Rating** ✅ DONE, see Section 1 above (`confluence.py`'s `_rs_rating_signal()`).
-- 15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan — not started (depends on 15.0, done).
+- **15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan** ✅ DONE, see Section 1 above (`risk.py`, `db.py`'s `trade_log` table, dashboard additions). Trade-log shape confirmed with Jonah before building (base fields only) -- see PROJECT_CONTEXT.md.
 - 15.8 — Documentation hygiene — ongoing alongside each sub-step, same discipline as every prior step.
 
 **Beyond the original 7 phases**: Position Calculator (Step 12) and Nifty-alignment + sector-relative-strength confluence signals (Step 13) -- both DONE, see Section 1 above. MVP scope explicitly locked to equities-only; commodities and index-as-tradeable-symbol support deferred to a later phase (Jonah's decision, Aug 31 2026).
