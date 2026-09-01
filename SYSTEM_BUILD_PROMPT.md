@@ -65,6 +65,25 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   one) — the original strict all-pass version was found too brittle on
   real data (one noisy mid-pattern step zeroed an otherwise legitimate
   setup; real RELIANCE data went score=40→80 after this fix).
+  **Step 15.5 (new)**: `count_bases_since_stage2()` -- how many distinct
+  qualifying VCP bases a symbol has printed since its most recent Stage
+  1->2 transition (Minervini's "which base are we on" confidence
+  discount). Bullish/Stage 2 only, no fabricated bearish mirror -- see
+  the function's own docstring. Design choice (per the handoff's
+  instruction to pick whichever is less invasive): derives the
+  transition by walking `classify_stage()` forward over cached OHLCV at
+  a 5-day stride, rather than persisting a new Stage-transition-log
+  table that would only start accumulating from today -- works
+  immediately across the whole existing universe. Bases are then mined
+  by grouping the full chronological contraction list (`_all_contractions()`,
+  factored out of `detect_vcp()` for reuse) wherever depth keeps
+  shrinking step to step. `format_base_notation()` renders
+  (Time)(Depth)(Ticks), e.g. `"2w3 over 2T"`. Real-data validation
+  (explicitly not synthetic): searched all 42 real Stage-2 symbols in the
+  DB, found 5 with a detectable transition (2026-06-18, a market-wide
+  rally start) -- TITAN shows a genuine 3-base advance since then
+  (`"2w3"`, `"5w3"`, `"2w3"` over 2-3T each), UNIONBANK a 1st base,
+  ABCAPITAL a 2nd, exercising all three confidence tiers.
 - `stage.py` — Stage 1-4 trend classification via 50/150/200-day SMA
   structure and SMA200 slope. Requires >=210 bars of history. Validated
   on synthetic uptrend/downtrend/flat cases and real RELIANCE data
@@ -118,6 +137,19 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   module-level constants in confluence.py (not yet in a config file — see
   Section 5, no config.yaml exists in this project yet) and will need
   calibration once more daily scrapes accumulate real trend history.
+  **Step 15.5 (new)**: `compute_confluence()` gained an optional
+  `ohlcv_df` param (backward compatible when omitted) -- when present and
+  the setup is bullish, `vcp.py`'s base count is wired in as an
+  ADDITIONAL MULTIPLIER alongside the existing Stage alignment multiplier
+  (`raw_score * stage_multiplier * base_multiplier`), not a separate
+  additive score, per the handoff's explicit instruction. Multipliers
+  config-driven (`base_staging.base_multiplier_1st/2nd/3plus` =
+  1.0/0.85/0.6). Validated real: TITAN's 3rd-base setup (raw_vcp=70)
+  correctly discounted to weighted=50.0 (Medium); UNIONBANK's 1st base
+  (raw_vcp=80) stayed full-weight at weighted=82.0 (High); ABCAPITAL's
+  2nd base (raw_vcp=45) discounted to weighted=40.2 (Medium). A full
+  210-symbol `run_scan.py` completed clean in 175s (vs. the 151s Step
+  15.3 baseline).
 - `db.py` — SQLite schema (8 tables) + upsert/read functions for ohlcv,
   participant_oi, cash_fii_dii, delivery_pct (india_vix, zones, vcp_setups,
   scan_results tables exist in schema, not yet populated by code). All
@@ -668,7 +700,7 @@ data:
   **Real, full end-to-end validation (Sep 1 2026)**: ran the actual full universe live, not simulated. `get_fno_universe()` returned 210 real stocks (6 index-future underlyings like NIFTY/BANKNIFTY correctly filtered out via the cash-equity-listing discriminator). `refresh_data.py`: 210 symbols' OHLCV backfilled in **211 seconds**, zero failures. `run_scan.py`: 210 symbols scanned (including full screener.in fundamentals scrapes for ~170 symbols never seen before) in **382 seconds**, zero failures. **Total end-to-end: ~10 minutes** -- comfortably fits the 6:45 PM Task Scheduler slot with a large margin before any reasonable time Jonah would check results; not a concern, but measured and reported as the doc required rather than assumed. DB counts scaled as expected: `fundamentals` 39->210 (full universe), latest `scan_date` went from ~58 scan_results rows (old 40-watchlist) to **278** (73 High / 111 Medium / 94 Low). Confirmed visually in a real browser: genuinely new symbols never seen in this project before (PATANJALI, TATACONSUM, VBL) showing up as real High-conviction setups.
 - **15.3 — 8-point Trend Template completion + new RS Rating module** ✅ DONE, see Section 1 above (`stage.py`'s `classify_trend_template()` and new `rs_rating.py`).
 - **15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags** ✅ DONE, see Section 1 above (`screener_scraper.py`, `db.py`, `fundamentals.py`).
-- 15.5 — VCP base staging + (Time)(Depth)(Ticks) notation — not started.
+- **15.5 — VCP base staging + (Time)(Depth)(Ticks) notation** ✅ DONE, see Section 1 above (`vcp.py`'s `count_bases_since_stage2()`, `confluence.py`'s base multiplier).
 - 15.6 — Confluence: wire in RS Rating — not started (depends on 15.3).
 - 15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan — not started (depends on 15.0, done).
 - 15.8 — Documentation hygiene — ongoing alongside each sub-step, same discipline as every prior step.

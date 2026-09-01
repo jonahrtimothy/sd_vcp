@@ -215,6 +215,29 @@ scale globally later. Local project path: `C:\Jonah\sd_vcp`.
 - No synthetic data allowed in the delivered/final system — synthetic data
   was used only to validate the core detection logic works
 
+## Engineering defaults picked by Claude Code during Step 15 (flagged here per the handoff doc's own instruction, not silently assumed)
+- **15.2, watchlist -> exclude-list repurposing**: `config.yaml`'s
+  `watchlist:` now means "F&O-eligible symbols to SKIP" instead of "the
+  scanned universe" (which is now `get_fno_universe()` live from Kite).
+  This was the Step 15 handoff doc's own suggested default, applied as-is.
+- **15.5, base-staging data source**: counting VCP bases since a symbol's
+  last Stage 1->2 transition needs a way to see Stage HISTORY, not just
+  the current Stage. The handoff doc offered two options and asked
+  Claude Code to "pick whichever is less invasive... and document the
+  choice." Picked: DERIVE the transition by re-running `classify_stage()`
+  backward over the OHLCV history already cached per symbol (a 5-day
+  stride, in `vcp.py`'s `count_bases_since_stage2()`), rather than
+  persisting a new Stage-transition-log table. Reasoning: a new log table
+  would only start accumulating data from whenever it shipped, so base
+  counts would report "unknown" for the entire existing 210-stock
+  universe for weeks; deriving from cached OHLCV works immediately and
+  needs no schema change. Tradeoff accepted: base counts are only as
+  reliable as the ~13 months of OHLCV history currently cached goes back
+  — a symbol whose current uptrend started before that window reports
+  "no transition found in available history" rather than guessing (see
+  SYSTEM_BUILD_PROMPT.md Section 1's `vcp.py` entry for real validation
+  numbers on this).
+
 ## What's already built and tested (in `src/`)
 - `zones.py` — supply/demand zone detection from OHLCV. **Merge bug FIXED
   and validated against real data**: 7 overlapping candidate zones on real
