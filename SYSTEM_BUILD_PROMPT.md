@@ -150,6 +150,15 @@ Project folder `sd_vcp_studio/` (local path `C:\Jonah\sd_vcp`) contains:
   2nd base (raw_vcp=45) discounted to weighted=40.2 (Medium). A full
   210-symbol `run_scan.py` completed clean in 175s (vs. the 151s Step
   15.3 baseline).
+  **Step 15.6 (new)**: `_rs_rating_signal()` wires RS Rating (Step 15.3)
+  in as another bonus/penalty input (`bonus_rs_rating`, config.yaml,
+  default +-6.0), reusing `stage.py`'s own RS_RATING_BULLISH_MIN/
+  BEARISH_MAX thresholds directly so this signal and the Trend Template's
+  RS check can't drift apart. Config-gated via `rs_rating.enabled`, same
+  toggle pattern as `sector_strength_enabled`. Validated real: UNIONBANK
+  (RS Rating 91) -> +6.0 bullish/-6.0 bearish; RELIANCE (RS Rating 25) ->
+  -6.0 bullish/+6.0 bearish -- correct both directions. A full 210-symbol
+  `run_scan.py` completed clean in 163s.
 - `db.py` — SQLite schema (8 tables) + upsert/read functions for ohlcv,
   participant_oi, cash_fii_dii, delivery_pct (india_vix, zones, vcp_setups,
   scan_results tables exist in schema, not yet populated by code). All
@@ -701,7 +710,7 @@ data:
 - **15.3 — 8-point Trend Template completion + new RS Rating module** ✅ DONE, see Section 1 above (`stage.py`'s `classify_trend_template()` and new `rs_rating.py`).
 - **15.4 — Fundamentals: sales/margin acceleration + earnings-quality flags** ✅ DONE, see Section 1 above (`screener_scraper.py`, `db.py`, `fundamentals.py`).
 - **15.5 — VCP base staging + (Time)(Depth)(Ticks) notation** ✅ DONE, see Section 1 above (`vcp.py`'s `count_bases_since_stage2()`, `confluence.py`'s base multiplier).
-- 15.6 — Confluence: wire in RS Rating — not started (depends on 15.3).
+- **15.6 — Confluence: wire in RS Rating** ✅ DONE, see Section 1 above (`confluence.py`'s `_rs_rating_signal()`).
 - 15.7 — Risk framework: R:R floor, portfolio concentration + new trade-log table, exit plan, gap disaster plan — not started (depends on 15.0, done).
 - 15.8 — Documentation hygiene — ongoing alongside each sub-step, same discipline as every prior step.
 
